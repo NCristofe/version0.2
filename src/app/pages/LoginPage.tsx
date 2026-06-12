@@ -2,11 +2,13 @@ import React from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { Heart, User } from 'lucide-react';
+import { Avatar, AvatarImage, AvatarFallback } from '../components/ui/avatar';
 import { motion } from 'motion/react';
+import geovannaAvatar from '../../assets/geovanna-avatar.png';
 
 const users = [
-  { id: 'user1', name: 'Meu Amor', color: '#FF6B9D', emoji: '💕' },
-  { id: 'user2', name: 'Minha Vida', color: '#FFB6C1', emoji: '💖' },
+  { id: 'user1', name: 'Natanael', color: '#FF6B9D', emoji: '👨', avatarUrl: undefined },
+  { id: 'user2', name: 'Geovanna', color: '#FFB6C1', emoji: '👩', avatarUrl: geovannaAvatar },
 ];
 
 export default function LoginPage() {
@@ -56,12 +58,15 @@ export default function LoginPage() {
               className="w-full bg-card p-6 rounded-3xl shadow-lg hover:shadow-2xl transition-all border-2 border-border hover:border-primary"
             >
               <div className="flex items-center gap-4">
-                <div
-                  className="w-16 h-16 rounded-full flex items-center justify-center text-3xl"
-                  style={{ backgroundColor: user.color + '20' }}
-                >
-                  {user.emoji}
-                </div>
+                <Avatar className="w-16 h-16">
+                  {user.avatarUrl ? (
+                    <AvatarImage src={user.avatarUrl} alt={user.name} />
+                  ) : (
+                    <AvatarFallback className="text-3xl" style={{ backgroundColor: user.color + '20' }}>
+                      {user.emoji}
+                    </AvatarFallback>
+                  )}
+                </Avatar>
                 <div className="flex-1 text-left">
                   <div className="flex items-center gap-2">
                     <User size={16} className="text-muted-foreground" />

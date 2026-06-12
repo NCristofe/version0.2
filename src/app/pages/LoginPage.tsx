@@ -2,18 +2,18 @@ import React from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { Heart, User } from 'lucide-react';
-import { Avatar, AvatarImage, AvatarFallback } from '../components/ui/avatar';
 import { motion } from 'motion/react';
-import geovannaAvatar from '../../assets/geovanna-avatar.png';
-
-const users = [
-  { id: 'user1', name: 'Natanael', color: '#FF6B9D', emoji: '👨', avatarUrl: undefined },
-  { id: 'user2', name: 'Geovanna', color: '#FFB6C1', emoji: '👩', avatarUrl: geovannaAvatar },
-];
+import { useAppData } from '../context/AppDataContext';
+import { UserAvatar } from '../components/UserAvatar';
 
 export default function LoginPage() {
   const { login, hasPassedAuth } = useAuth();
+  const { coupleProfile } = useAppData();
   const navigate = useNavigate();
+  const users = [
+    { id: 'user1' as const, profile: coupleProfile.user1 },
+    { id: 'user2' as const, profile: coupleProfile.user2 },
+  ];
 
   React.useEffect(() => {
     if (!hasPassedAuth) {
@@ -58,21 +58,13 @@ export default function LoginPage() {
               className="w-full bg-card p-6 rounded-3xl shadow-lg hover:shadow-2xl transition-all border-2 border-border hover:border-primary"
             >
               <div className="flex items-center gap-4">
-                <Avatar className="w-16 h-16">
-                  {user.avatarUrl ? (
-                    <AvatarImage src={user.avatarUrl} alt={user.name} />
-                  ) : (
-                    <AvatarFallback className="text-3xl" style={{ backgroundColor: user.color + '20' }}>
-                      {user.emoji}
-                    </AvatarFallback>
-                  )}
-                </Avatar>
+                <UserAvatar userId={user.id} className="w-16 h-16" fallbackClassName="bg-primary/10" />
                 <div className="flex-1 text-left">
                   <div className="flex items-center gap-2">
                     <User size={16} className="text-muted-foreground" />
                     <span className="text-sm text-muted-foreground">Entrar como</span>
                   </div>
-                  <p className="text-xl mt-1">{user.name}</p>
+                  <p className="text-xl mt-1">{user.profile.name}</p>
                 </div>
                 <Heart className="w-6 h-6 text-primary" fill="currentColor" />
               </div>

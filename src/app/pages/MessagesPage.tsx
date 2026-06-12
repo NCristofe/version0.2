@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Send, Heart, Smile } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { UserAvatar } from '../components/UserAvatar';
 
 interface Message {
   id: string;
@@ -97,6 +98,7 @@ export default function MessagesPage() {
         <AnimatePresence>
           {messages.map((message) => {
             const isCurrentUser = message.userId === currentUser;
+            const messageUserId = message.userId === 'user2' ? 'user2' : 'user1';
 
             return (
               <motion.div
@@ -104,8 +106,11 @@ export default function MessagesPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
+                className={`flex items-end gap-2 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
               >
+                {!isCurrentUser && (
+                  <UserAvatar userId={messageUserId} className="w-9 h-9 shrink-0" fallbackClassName="text-lg bg-primary/10" />
+                )}
                 <div
                   className={`max-w-[75%] rounded-3xl px-5 py-3 shadow-md ${
                     isCurrentUser
@@ -122,6 +127,9 @@ export default function MessagesPage() {
                     {formatTime(message.timestamp)}
                   </p>
                 </div>
+                {isCurrentUser && (
+                  <UserAvatar userId={messageUserId} className="w-9 h-9 shrink-0" fallbackClassName="text-lg bg-primary/10" />
+                )}
               </motion.div>
             );
           })}

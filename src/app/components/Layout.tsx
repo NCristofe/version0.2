@@ -3,6 +3,8 @@ import { Outlet, useNavigate, useLocation } from 'react-router';
 import { Home, CalendarDays, Target, BookHeart, Trophy } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useGamification } from '../context/GamificationContext';
+import { useAuth } from '../context/AuthContext';
+import { UserAvatar } from './UserAvatar';
 
 const navigation = [
   { name: 'Início',     path: '/',          icon: Home },
@@ -16,6 +18,8 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentLevel, xpProgress } = useGamification();
+  const { currentUser } = useAuth();
+  const currentUserId = currentUser === 'user2' ? 'user2' : 'user1';
 
   return (
     <div className="min-h-screen pb-20">
@@ -49,10 +53,10 @@ export default function Layout() {
                   <div className="relative z-10">
                     {isProfile ? (
                       <div className="relative">
-                        <Icon
-                          size={22}
-                          className={`transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
-                          fill={isActive ? 'currentColor' : 'none'}
+                        <UserAvatar
+                          userId={currentUserId}
+                          className={`w-6 h-6 transition-opacity ${isActive ? 'opacity-100' : 'opacity-70'}`}
+                          fallbackClassName="text-sm bg-primary/10"
                         />
                         {/* XP progress ring */}
                         <svg className="absolute -inset-1.5 w-9 h-9 -top-1.5 -left-1.5" viewBox="0 0 36 36">

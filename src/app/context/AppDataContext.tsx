@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { supabase } from '../../supabase';
+import { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -172,7 +173,7 @@ interface AppData {
   coupleProfile: CoupleProfile;
   answeredQuestionIds: string[];
   loading: boolean;
-  session: any;
+  session: Session | null;
 }
 
 interface AppDataContextType extends AppData {
@@ -296,10 +297,27 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       setData(prev => ({ ...prev, session }));
 
       if (session?.user) {
-        // Aqui você buscaria os dados das tabelas do Supabase
-        // Exemplo: const { data: events } = await supabase.from('events').select('*');
-        // Por brevidade, manteremos o loading como false após checar a sessão
-        setData(prev => ({ ...prev, loading: false }));
+        try {
+          // Exemplo de busca de dados reais ao iniciar
+          const { data: events } = await supabase
+            .from('events')
+            .select('*');
+            
+          if (events) {
+            setData(prev => ({ 
+              ...prev, 
+              events: events.map((e: any) => ({
+                ...e,
+                date: e.event_date, // mapeando do nome da coluna SQL para o seu tipo TS
+                time: e.event_time
+              })),
+            }));
+          }
+        } catch (error) {
+          console.error('Erro ao carregar dados do Supabase:', error);
+        } finally {
+          setData(prev => ({ ...prev, loading: false }));
+        }
       } else {
         setData(prev => ({ ...prev, loading: false }));
       }
@@ -307,7 +325,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
     initSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       setData(prev => ({ ...prev, session }));
     });
 
@@ -423,6 +441,17 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       // Lógica de update no supabase aqui...
     }
   }, [set]);
+
+  const toggleMemoryFavorite = useCallback((id: string) => {
+    set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, favorited: !m.favorited } : m) }));
+  }, [set]);
+
+  const deleteMemory = useCallback(async (id: string) => {
+    set((p) => ({ ...p, memories: p.memories.filter((m) => m.id !== id) }));
+    if (data.session?.user) {
+      await supabase.from('memories').delete().eq('id', id);
+    }
+  }, [set, data.session?.user]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────
   const addCapsule = useCallback((c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => {

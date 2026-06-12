@@ -56,6 +56,7 @@ function MemoriasTab() {
   const [showForm, setShowForm] = useState(false);
   const [filterEmotion, setFilterEmotion] = useState<string | 'todos'>('todos');
   const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [imageError, setImageError] = useState('');
   const [form, setForm] = useState({
     title: '', description: '', date: new Date().toISOString().split('T')[0],
@@ -69,6 +70,7 @@ function MemoriasTab() {
       location: '', emotion: 'feliz', liked: false, favorited: false, userId: 'user1',
     });
     setImageUrls([]); // Limpar as URLs das imagens
+    setSelectedFiles([]);
     setImageError('');
   };
 
@@ -88,6 +90,7 @@ function MemoriasTab() {
     }
 
     try {
+      setSelectedFiles((current) => [...current, ...pickedFiles]);
       const processed = await Promise.all(pickedFiles.map(fileToImageUrl));
       setImageUrls((current) => [...current, ...processed]);
     } catch {
@@ -97,7 +100,7 @@ function MemoriasTab() {
 
   const submitMemory = async () => {
     if (!form.title.trim()) return;
-    await addMemory({ ...form, imageUrls });
+    await addMemory(form, selectedFiles);
     addXP(20, 'Memória criada 💖');
     confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 }, colors: ['#FF6B9D', '#FFB6C1'] });
     setShowForm(false);

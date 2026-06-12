@@ -1,29 +1,34 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
-import { Heart, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Heart, Eye, EyeOff } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useAppData } from '../context/AppDataContext';
+import { UserAvatar } from '../components/UserAvatar';
 
 export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(false);
-  const { authenticate, hasPassedAuth, isAuthenticated } = useAuth();
+  const { authenticate, currentUser, isAuthenticated } = useAuth();
+  const { coupleProfile } = useAppData();
   const navigate = useNavigate();
+  const currentUserId = currentUser === 'user2' ? 'user2' : 'user1';
+  const currentProfile = coupleProfile[currentUserId];
 
   React.useEffect(() => {
     if (isAuthenticated) {
       navigate('/');
-    } else if (hasPassedAuth) {
+    } else if (!currentUser) {
       navigate('/login');
     }
-  }, [isAuthenticated, hasPassedAuth, navigate]);
+  }, [isAuthenticated, currentUser, navigate]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
     if (authenticate(password)) {
-      navigate('/login');
+      navigate('/');
     } else {
       setError(true);
       setTimeout(() => setError(false), 500);
@@ -77,14 +82,20 @@ export default function AuthPage() {
               <Heart className="w-16 h-16 text-primary mx-auto" fill="currentColor" />
             </motion.div>
             <h1 className="text-4xl mb-2 text-primary">Nosso Amor</h1>
-            <p className="text-muted-foreground">em Tempo Real</p>
+            <div className="flex items-center justify-center gap-3 mt-3">
+              <UserAvatar userId={currentUserId} className="w-12 h-12" fallbackClassName="bg-primary/10 text-2xl" />
+              <div className="text-left">
+                <p className="text-xs text-muted-foreground">Entrando como</p>
+                <p className="text-lg text-foreground">{currentProfile.name}</p>
+              </div>
+            </div>
           </motion.div>
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="password" className="block text-sm mb-2 text-foreground/80">
-                Digite a senha do nosso amor
+                Digite sua senha
               </label>
               <div className="relative">
                 <input
@@ -95,7 +106,7 @@ export default function AuthPage() {
                   className={`w-full px-4 py-4 bg-input-background rounded-2xl border-2 transition-all focus:outline-none focus:border-primary ${
                     error ? 'border-destructive animate-shake' : 'border-border'
                   }`}
-                  placeholder="nossosecreto"
+                  placeholder="Sua senha"
                   required
                 />
                 <button
@@ -123,9 +134,18 @@ export default function AuthPage() {
               type="submit"
               className="w-full bg-primary text-primary-foreground py-4 rounded-2xl shadow-lg hover:shadow-xl transition-all"
             >
-              Entrar no nosso mundo ❤️
+              Entrar
             </motion.button>
           </form>
+
+          <button
+            type="button"
+            onClick={() => navigate('/login')}
+            className="w-full mt-4 text-sm text-muted-foreground hover:text-primary transition-colors inline-flex items-center justify-center gap-2"
+          >
+            <ArrowLeft size={16} />
+            Trocar usuário
+          </button>
 
           <p className="text-center text-xs text-muted-foreground mt-6">
             Criado com muito amor 💕

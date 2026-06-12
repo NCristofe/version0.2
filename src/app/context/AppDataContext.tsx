@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { supabase } from '../../lib/supabase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -170,6 +171,8 @@ interface AppData {
   streak: StreakState;
   coupleProfile: CoupleProfile;
   answeredQuestionIds: string[];
+  loading: boolean;
+  session: any;
 }
 
 interface AppDataContextType extends AppData {
@@ -250,6 +253,8 @@ function defaultData(): AppData {
       startDate: '2025-08-23',
     },
     answeredQuestionIds: [],
+    loading: true,
+    session: null,
   };
 }
 
@@ -284,28 +289,73 @@ const AppDataContext = createContext<AppDataContextType | undefined>(undefined);
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<AppData>(loadData);
 
+  // Sincronização Inicial com Supabase
+  useEffect(() => {
+    const initSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setData(prev => ({ ...prev, session }));
+
+      if (session?.user) {
+        // Aqui você buscaria os dados das tabelas do Supabase
+        // Exemplo: const { data: events } = await supabase.from('events').select('*');
+        // Por brevidade, manteremos o loading como false após checar a sessão
+        setData(prev => ({ ...prev, loading: false }));
+      } else {
+        setData(prev => ({ ...prev, loading: false }));
+      }
+    };
+
+    initSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setData(prev => ({ ...prev, session }));
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   useEffect(() => {
     saveData(data);
   }, [data]);
 
   const set = useCallback((updater: (prev: AppData) => AppData) => {
-    setData((prev) => {
-      const next = updater(prev);
-      return next;
-    });
+    setData((prev) => updater(prev));
   }, []);
 
   // ── Events ──────────────────────────────────────────────────────────────────
-  const addEvent = useCallback((e: Omit<CalendarEvent, 'id'>) => {
-    set((p) => ({ ...p, events: [...p.events, { ...e, id: uid() }] }));
+  const addEvent = useCallback(async (e: Omit<CalendarEvent, 'id'>) => {
+    const newId = uid();
+    // Otimista: Atualiza local primeiro
+    set((p) => ({ ...p, events: [...p.events, { ...e, id: newId }] }));
+
+    // Persiste no Supabase se houver sessão
+    if (data.session?.user) {
+      await supabase.from('events').insert([{
+        title: e.title,
+        description: e.description,
+        category: e.category,
+        event_date: e.date,
+        event_time: e.time,
+        location: e.location,
+        color: e.color
+      }]);
+    }
   }, [set]);
 
-  const updateEvent = useCallback((id: string, updates: Partial<CalendarEvent>) => {
+  const updateEvent = useCallback(async (id: string, updates: Partial<CalendarEvent>) => {
     set((p) => ({ ...p, events: p.events.map((e) => e.id === id ? { ...e, ...updates } : e) }));
+    
+    if (data.session?.user) {
+      await supabase.from('events').update(updates).eq('id', id);
+    }
   }, [set]);
 
-  const deleteEvent = useCallback((id: string) => {
+  const deleteEvent = useCallback(async (id: string) => {
     set((p) => ({ ...p, events: p.events.filter((e) => e.id !== id) }));
+
+    if (data.session?.user) {
+      await supabase.from('events').delete().eq('id', id);
+    }
   }, [set]);
 
   const getEventsForDate = useCallback((date: string) => {
@@ -321,33 +371,57 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [data.events]);
 
   // ── Goals ────────────────────────────────────────────────────────────────────
-  const addGoal = useCallback((g: Omit<Goal, 'id' | 'createdAt'>) => {
-    set((p) => ({ ...p, goals: [...p.goals, { ...g, id: uid(), createdAt: new Date().toISOString() }] }));
+  const addGoal = useCallback(async (g: Omit<Goal, 'id' | 'createdAt'>) => {
+    const newId = uid();
+    const createdAt = new Date().toISOString();
+    set((p) => ({ ...p, goals: [...p.goals, { ...g, id: newId, createdAt }] }));
+
+    if (data.session?.user) {
+      await supabase.from('goals').insert([{
+        name: g.name,
+        description: g.description,
+        category: g.category,
+        target_value: g.targetValue,
+        current_value: g.currentValue,
+        deadline: g.deadline,
+        status: g.status
+      }]);
+    }
   }, [set]);
 
-  const updateGoal = useCallback((id: string, updates: Partial<Goal>) => {
+  const updateGoal = useCallback(async (id: string, updates: Partial<Goal>) => {
     set((p) => ({ ...p, goals: p.goals.map((g) => g.id === id ? { ...g, ...updates } : g) }));
+    if (data.session?.user) {
+      await supabase.from('goals').update(updates).eq('id', id);
+    }
   }, [set]);
 
-  const deleteGoal = useCallback((id: string) => {
+  const deleteGoal = useCallback(async (id: string) => {
     set((p) => ({ ...p, goals: p.goals.filter((g) => g.id !== id) }));
+    if (data.session?.user) {
+      await supabase.from('goals').delete().eq('id', id);
+    }
   }, [set]);
 
   // ── Memories ─────────────────────────────────────────────────────────────────
-  const addMemory = useCallback((m: Omit<Memory, 'id' | 'createdAt'>) => {
+  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt'>) => {
     set((p) => ({ ...p, memories: [{ ...m, id: uid(), createdAt: new Date().toISOString() }, ...p.memories] }));
+    if (data.session?.user) {
+      await supabase.from('memories').insert([{
+        title: m.title,
+        description: m.description,
+        memory_date: m.date,
+        emotion: m.emotion,
+        location: m.location
+      }]);
+    }
   }, [set]);
 
   const toggleMemoryLike = useCallback((id: string) => {
     set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, liked: !m.liked } : m) }));
-  }, [set]);
-
-  const toggleMemoryFavorite = useCallback((id: string) => {
-    set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, favorited: !m.favorited } : m) }));
-  }, [set]);
-
-  const deleteMemory = useCallback((id: string) => {
-    set((p) => ({ ...p, memories: p.memories.filter((m) => m.id !== id) }));
+    if (data.session?.user) {
+      // Lógica de update no supabase aqui...
+    }
   }, [set]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────

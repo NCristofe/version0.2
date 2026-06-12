@@ -43,6 +43,6 @@ export const router = createBrowserRouter([
   },
   {
     path: '*',
-    element: <Navigate to="/auth" replace />,
+    element: <Navigate to="/login" replace />,
   },
 ]);

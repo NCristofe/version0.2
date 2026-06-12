@@ -154,17 +154,11 @@ export default function CoupleProfilePage() {
     setTimeout(() => setNewXPPop(null), 2000);
   }, [dailyState, addXP]);
 
-  const changeProfileImage = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const changeProfileImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        updatePersonProfile(currentUserId, { avatarUrl: reader.result }); // Usar a nova função
-      }
-    };
-    reader.readAsDataURL(file);
+    await updatePersonProfile(currentUserId, {}, file);
     event.target.value = '';
   };
 

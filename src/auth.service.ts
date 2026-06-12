@@ -28,11 +28,5 @@ export const authService = {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     return data.session;
-  },
-
-  async onAuthStateChange(callback: (session: any) => void) {
-    return supabase.auth.onAuthStateChange((_event, session) => {
-      callback(session);
-    });
   }
 };

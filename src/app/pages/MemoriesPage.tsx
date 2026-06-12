@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Plus, X, Heart, Star, MapPin, Trash2, MessageSquare,
-  Smile, RefreshCw, Send, CheckCircle2,
+  Smile, RefreshCw, Send, CheckCircle2, Camera,
 } from 'lucide-react';
 import {
   useAppData,
@@ -16,6 +16,37 @@ import confetti from 'canvas-confetti';
 
 type TabType = 'memorias' | 'perguntas' | 'checkin';
 
+function fileToImageUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const maxSize = 1600;
+        const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+
+        const context = canvas.getContext('2d');
+        if (!context) {
+          reject(new Error('Não foi possível processar a imagem.'));
+          return;
+        }
+
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.86));
+      };
+      image.onerror = () => reject(new Error('Imagem inválida.'));
+      image.src = String(reader.result);
+    };
+
+    reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 // ─── Memories Tab ─────────────────────────────────────────────────────────────
 
 function MemoriasTab() {
@@ -23,22 +54,53 @@ function MemoriasTab() {
   const { addXP } = useGamification();
   const [showForm, setShowForm] = useState(false);
   const [filterEmotion, setFilterEmotion] = useState<string | 'todos'>('todos');
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [imageError, setImageError] = useState('');
   const [form, setForm] = useState({
     title: '', description: '', date: new Date().toISOString().split('T')[0],
     location: '', emotion: 'feliz' as Memory['emotion'],
     liked: false, favorited: false,
   });
 
-  const submitMemory = () => {
-    if (!form.title.trim()) return;
-    addMemory(form);
-    addXP(20, 'Memória criada 💖');
-    confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 }, colors: ['#FF6B9D', '#FFB6C1'] });
-    setShowForm(false);
+  const resetForm = () => {
     setForm({
       title: '', description: '', date: new Date().toISOString().split('T')[0],
       location: '', emotion: 'feliz', liked: false, favorited: false,
     });
+    setImageUrls([]);
+    setImageError('');
+  };
+
+  const handleImageSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.type.startsWith('image/'));
+    event.target.value = '';
+
+    if (files.length === 0) return;
+
+    const remainingSlots = Math.max(0, 6 - imageUrls.length);
+    const pickedFiles = files.slice(0, remainingSlots);
+
+    if (pickedFiles.length < files.length) {
+      setImageError('Você pode adicionar até 6 imagens por memória.');
+    } else {
+      setImageError('');
+    }
+
+    try {
+      const processed = await Promise.all(pickedFiles.map(fileToImageUrl));
+      setImageUrls((current) => [...current, ...processed]);
+    } catch {
+      setImageError('Não consegui carregar uma das imagens. Tente outra foto.');
+    }
+  };
+
+  const submitMemory = async () => {
+    if (!form.title.trim()) return;
+    await addMemory({ ...form, imageUrls });
+    addXP(20, 'Memória criada 💖');
+    confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 }, colors: ['#FF6B9D', '#FFB6C1'] });
+    setShowForm(false);
+    resetForm();
   };
 
   const filtered = useMemo(() => {
@@ -104,7 +166,7 @@ function MemoriasTab() {
 
       <AnimatePresence>
         {showForm && (
-          <BottomSheet title="Nova Memória" onClose={() => setShowForm(false)}>
+          <BottomSheet title="Nova Memória" onClose={() => { setShowForm(false); resetForm(); }}>
             <div className="space-y-4">
               <FormField label="Título">
                 <input className="input-base" placeholder="Ex: Nosso primeiro pôr do sol" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
@@ -136,6 +198,40 @@ function MemoriasTab() {
 
               <FormField label="Descrição (opcional)">
                 <textarea className="input-base resize-none" rows={3} placeholder="Conte como foi..." value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+              </FormField>
+
+              <FormField label="Fotos (opcional)">
+                <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border bg-muted/40 p-5 text-center cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors">
+                  <Camera className="w-7 h-7 text-primary" />
+                  <span className="text-sm text-foreground">Adicionar fotos</span>
+                  <span className="text-xs text-muted-foreground">Até 6 imagens por memória</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleImageSelection}
+                    className="sr-only"
+                  />
+                </label>
+
+                {imageError && <p className="text-xs text-destructive mt-2">{imageError}</p>}
+
+                {imageUrls.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    {imageUrls.map((url, index) => (
+                      <div key={`${url.slice(0, 32)}-${index}`} className="relative aspect-square overflow-hidden rounded-xl border border-border bg-muted">
+                        <img src={url} alt={`Foto ${index + 1}`} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setImageUrls((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                          className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/55 text-white flex items-center justify-center"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </FormField>
 
               <button onClick={submitMemory} className="w-full bg-primary text-white py-4 rounded-2xl shadow-lg">Salvar Memória</button>
@@ -184,6 +280,24 @@ function MemoryCard({ memory, onLike, onFavorite, onDelete }: {
 
       {memory.description && (
         <p className="text-sm text-muted-foreground leading-relaxed mb-3">{memory.description}</p>
+      )}
+
+      {memory.imageUrls && memory.imageUrls.length > 0 && (
+        <div className={`grid gap-2 mb-3 ${memory.imageUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          {memory.imageUrls.slice(0, 4).map((url, index) => (
+            <div
+              key={`${memory.id}-${index}`}
+              className={`relative overflow-hidden rounded-xl bg-muted ${memory.imageUrls?.length === 1 ? 'aspect-[4/3]' : 'aspect-square'}`}
+            >
+              <img src={url} alt={`${memory.title} - foto ${index + 1}`} className="w-full h-full object-cover" />
+              {index === 3 && memory.imageUrls && memory.imageUrls.length > 4 && (
+                <div className="absolute inset-0 bg-black/55 text-white flex items-center justify-center text-lg">
+                  +{memory.imageUrls.length - 4}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       <div className="flex items-center gap-3 pt-2 border-t border-border/50">

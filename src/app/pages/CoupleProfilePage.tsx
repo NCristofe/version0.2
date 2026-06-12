@@ -12,6 +12,9 @@ import {
   Heart,
   Zap,
   Lock,
+  KeyRound,
+  Eye,
+  EyeOff,
   ChevronRight,
   Gift,
   Sparkles,
@@ -74,7 +77,7 @@ function loadDailyChallenges(): { date: string; completed: string[] } {
 type TabType = 'conquistas' | 'historico' | 'desafios';
 
 export default function CoupleProfilePage() {
-  const { currentUser } = useAuth();
+  const { currentUser, changePassword } = useAuth();
   const { coupleProfile, updatePersonProfile } = useAppData();
   const navigate = useNavigate();
   const {
@@ -94,6 +97,10 @@ export default function CoupleProfilePage() {
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [dailyState, setDailyState] = useState(loadDailyChallenges);
   const [newXPPop, setNewXPPop] = useState<string | null>(null);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ current: '', next: '', confirm: '' });
+  const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const prevLevel = React.useRef(currentLevel.level);
 
   const daysTogether = getDaysTogether();
@@ -160,6 +167,29 @@ export default function CoupleProfilePage() {
     };
     reader.readAsDataURL(file);
     event.target.value = '';
+  };
+
+  const handlePasswordChange = (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (passwordForm.next.length < 4) {
+      setPasswordMessage({ type: 'error', text: 'A nova senha precisa ter pelo menos 4 caracteres.' });
+      return;
+    }
+
+    if (passwordForm.next !== passwordForm.confirm) {
+      setPasswordMessage({ type: 'error', text: 'A confirmação não bate com a nova senha.' });
+      return;
+    }
+
+    if (!changePassword(passwordForm.current, passwordForm.next)) {
+      setPasswordMessage({ type: 'error', text: 'Senha atual incorreta.' });
+      return;
+    }
+
+    setPasswordForm({ current: '', next: '', confirm: '' });
+    setPasswordMessage({ type: 'success', text: 'Senha alterada com sucesso.' });
+    setTimeout(() => setPasswordMessage(null), 2500);
   };
 
   const dailyCompletedCount = dailyState.completed.length;
@@ -331,6 +361,94 @@ export default function CoupleProfilePage() {
           <p className="text-xs text-muted-foreground mt-2 text-center">
             {daysTogether < 365 ? `${365 - daysTogether} dias para 1 ano juntos 🎉` : 'Vocês chegaram ao amor eterno! 👑'}
           </p>
+        </motion.div>
+      </div>
+
+      {/* Password Settings */}
+      <div className="px-4 mb-5">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.48 }}
+          className="bg-card rounded-3xl p-5 shadow-lg border border-border"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setShowPasswordForm((value) => !value);
+              setPasswordMessage(null);
+            }}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                <KeyRound className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-foreground">Senha de acesso</p>
+                <p className="text-xs text-muted-foreground">{currentProfile.name}</p>
+              </div>
+            </div>
+            <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform ${showPasswordForm ? 'rotate-90' : ''}`} />
+          </button>
+
+          <AnimatePresence initial={false}>
+            {showPasswordForm && (
+              <motion.form
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                onSubmit={handlePasswordChange}
+                className="overflow-hidden"
+              >
+                <div className="pt-5 space-y-3">
+                  {[
+                    { key: 'current' as const, label: 'Senha atual' },
+                    { key: 'next' as const, label: 'Nova senha' },
+                    { key: 'confirm' as const, label: 'Confirmar nova senha' },
+                  ].map((field) => (
+                    <label key={field.key} className="block">
+                      <span className="block text-xs text-muted-foreground mb-1">{field.label}</span>
+                      <div className="relative">
+                        <input
+                          type={showPasswords ? 'text' : 'password'}
+                          value={passwordForm[field.key]}
+                          onChange={(event) => {
+                            setPasswordForm((form) => ({ ...form, [field.key]: event.target.value }));
+                            setPasswordMessage(null);
+                          }}
+                          className="w-full px-4 py-3 pr-11 bg-input-background rounded-2xl border border-border focus:outline-none focus:border-primary"
+                          required
+                        />
+                        {field.key === 'current' && (
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswords((value) => !value)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showPasswords ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+
+                  {passwordMessage && (
+                    <p className={`text-sm ${passwordMessage.type === 'success' ? 'text-green-600' : 'text-destructive'}`}>
+                      {passwordMessage.text}
+                    </p>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="w-full bg-primary text-primary-foreground py-3 rounded-2xl shadow-md hover:shadow-lg transition-all"
+                  >
+                    Salvar nova senha
+                  </button>
+                </div>
+              </motion.form>
+            )}
+          </AnimatePresence>
         </motion.div>
       </div>
 

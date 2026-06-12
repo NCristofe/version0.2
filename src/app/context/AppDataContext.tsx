@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { supabase } from '../../supabase';
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
+import geovannaAvatar from '../../assets/geovanna-avatar.png';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -117,6 +118,8 @@ export interface PersonProfile {
   favoriteColor: string;
   favoriteFood: string;
   favoriteHobby: string;
+  emoji: string;
+  avatarUrl?: string;
 }
 
 // ─── Category config ─────────────────────────────────────────────────────────
@@ -220,6 +223,7 @@ interface AppDataContextType extends AppData {
   recordActivity: () => void;
   // Profile
   updateCoupleProfile: (profile: Partial<CoupleProfile>) => void;
+  updatePersonProfile: (userId: 'user1' | 'user2', profile: Partial<PersonProfile>) => void;
 }
 
 const STORAGE_KEY = 'nosso_amor_appdata_v1';
@@ -259,8 +263,8 @@ function defaultData(): AppData {
     checkIns: [],
     streak: { current: 0, longest: 0, lastActivityDate: '' },
     coupleProfile: {
-      user1: { name: 'Eu', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '' },
-      user2: { name: 'Amor', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '' },
+      user1: { name: 'Natanael', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '', emoji: '👨' },
+      user2: { name: 'Geovanna', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '', emoji: '👩', avatarUrl: geovannaAvatar },
       coupleName: 'Nosso Amor',
       startDate: '2025-08-23',
     },
@@ -281,6 +285,12 @@ function loadData(): AppData {
       return {
         ...def,
         ...parsed,
+        coupleProfile: {
+          ...def.coupleProfile,
+          ...parsed.coupleProfile,
+          user1: { ...def.coupleProfile.user1, ...parsed.coupleProfile?.user1 },
+          user2: { ...def.coupleProfile.user2, ...parsed.coupleProfile?.user2 },
+        },
         questions: def.questions.map((dq: CoupleQuestion) => {
           const existing = parsed.questions?.find((q: CoupleQuestion) => q.id === dq.id);
           return existing ?? dq;
@@ -605,6 +615,19 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     set((p) => ({ ...p, coupleProfile: { ...p.coupleProfile, ...profile } }));
   }, [set]);
 
+  const updatePersonProfile = useCallback((userId: 'user1' | 'user2', profile: Partial<PersonProfile>) => {
+    set((p) => ({
+      ...p,
+      coupleProfile: {
+        ...p.coupleProfile,
+        [userId]: {
+          ...p.coupleProfile[userId],
+          ...profile,
+        },
+      },
+    }));
+  }, [set]);
+
   return (
     <AppDataContext.Provider value={{
       ...data,
@@ -618,6 +641,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       addCheckIn, getTodayCheckIn,
       recordActivity,
       updateCoupleProfile,
+      updatePersonProfile,
     }}>
       {children}
     </AppDataContext.Provider>

@@ -7,7 +7,7 @@ import { useAppData } from '../context/AppDataContext';
 import { UserAvatar } from '../components/UserAvatar';
 
 export default function LoginPage() {
-  const { login, hasPassedAuth } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const { coupleProfile } = useAppData();
   const navigate = useNavigate();
   const users = [
@@ -16,14 +16,14 @@ export default function LoginPage() {
   ];
 
   React.useEffect(() => {
-    if (!hasPassedAuth) {
-      navigate('/auth');
+    if (isAuthenticated) {
+      navigate('/');
     }
-  }, [hasPassedAuth, navigate]);
+  }, [isAuthenticated, navigate]);
 
   const handleUserSelect = (userId: string) => {
     login(userId);
-    navigate('/');
+    navigate('/auth');
   };
 
   return (

@@ -58,6 +58,14 @@ export interface Memory {
   liked: boolean;
   favorited: boolean;
   createdAt: string;
+  imageUrls?: string[];
+}
+
+export interface Message {
+  id: string;
+  sender_id: string;
+  text: string;
+  created_at: string;
 }
 
 export interface TimeCapsule {
@@ -172,6 +180,7 @@ interface AppData {
   streak: StreakState;
   coupleProfile: CoupleProfile;
   answeredQuestionIds: string[];
+  messages: Message[];
   loading: boolean;
   session: Session | null;
 }
@@ -188,10 +197,12 @@ interface AppDataContextType extends AppData {
   updateGoal: (id: string, updates: Partial<Goal>) => void;
   deleteGoal: (id: string) => void;
   // Memories
-  addMemory: (m: Omit<Memory, 'id' | 'createdAt'>) => void;
+  addMemory: (m: Omit<Memory, 'id' | 'createdAt'>, files?: File[]) => Promise<void>;
   toggleMemoryLike: (id: string) => void;
   toggleMemoryFavorite: (id: string) => void;
   deleteMemory: (id: string) => void;
+  // Chat
+  sendMessage: (text: string) => Promise<void>;
   // Capsules
   addCapsule: (c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => void;
   openCapsule: (id: string) => void;
@@ -254,6 +265,7 @@ function defaultData(): AppData {
       startDate: '2025-08-23',
     },
     answeredQuestionIds: [],
+    messages: [],
     loading: true,
     session: null,
   };
@@ -325,11 +337,29 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
     initSession();
 
+    // Inscrição Realtime para Chat
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload) => {
+          setData(prev => ({
+            ...prev,
+            messages: [...prev.messages, payload.new as Message]
+          }));
+        }
+      )
+      .subscribe();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       setData(prev => ({ ...prev, session }));
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {
@@ -422,17 +452,47 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [set]);
 
   // ── Memories ─────────────────────────────────────────────────────────────────
-  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt'>) => {
-    set((p) => ({ ...p, memories: [{ ...m, id: uid(), createdAt: new Date().toISOString() }, ...p.memories] }));
+  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt'>, files?: File[]) => {
+    let uploadedUrls: string[] = m.imageUrls || [];
+
     if (data.session?.user) {
+      // 1. Upload das imagens para o Storage (se houver arquivos)
+      if (files && files.length > 0) {
+        for (const file of files) {
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${Math.random()}.${fileExt}`;
+          const filePath = `${data.session.user.id}/${fileName}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('memories')
+            .upload(filePath, file);
+
+          if (!uploadError) {
+            const { data: { publicUrl } } = supabase.storage
+              .from('memories')
+              .getPublicUrl(filePath);
+            uploadedUrls.push(publicUrl);
+          }
+        }
+      }
+
+      // 2. Inserção no Banco de Dados
       await supabase.from('memories').insert([{
         title: m.title,
         description: m.description,
         memory_date: m.date,
         emotion: m.emotion,
-        location: m.location
+        location: m.location,
+        image_urls: uploadedUrls,
+        user_id: data.session.user.id
       }]);
     }
+
+    // Atualização do estado local (UI)
+    set((p) => ({ 
+      ...p, 
+      memories: [{ ...m, imageUrls: uploadedUrls, id: uid(), createdAt: new Date().toISOString() }, ...p.memories] 
+    }));
   }, [set]);
 
   const toggleMemoryLike = useCallback((id: string) => {
@@ -452,6 +512,21 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('memories').delete().eq('id', id);
     }
   }, [set, data.session?.user]);
+
+  // ── Chat ─────────────────────────────────────────────────────────────────────
+  const sendMessage = useCallback(async (text: string) => {
+    if (!data.session?.user || !text.trim()) return;
+    
+    const { error } = await supabase.from('messages').insert([{
+      text,
+      sender_id: data.session.user.id,
+      // Aqui assumimos que o RLS cuidará do couple_id ou que você buscará o id do casal no perfil
+    }]);
+
+    if (error) {
+      console.error('Erro ao enviar mensagem:', error);
+    }
+  }, [data.session]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────
   const addCapsule = useCallback((c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => {
@@ -536,6 +611,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       addEvent, updateEvent, deleteEvent, getEventsForDate, getUpcomingEvents,
       addGoal, updateGoal, deleteGoal,
       addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory,
+      sendMessage,
       addCapsule, openCapsule,
       addWish, deleteWish,
       answerQuestion, getDailyQuestion, getRandomQuestion,

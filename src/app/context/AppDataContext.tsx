@@ -224,7 +224,7 @@ interface AppDataContextType extends AppData {
   // Streak
   recordActivity: () => void;
   // Profile
-  updatePersonProfile: (personId: 'user1' | 'user2', updates: Partial<PersonProfile>) => void; // Alterado para updatePersonProfile
+  updatePersonProfile: (personId: 'user1' | 'user2', updates: Partial<PersonProfile>, file?: File) => Promise<void>; // Alterado para updatePersonProfile
 }
 
 const STORAGE_KEY = 'nosso_amor_appdata_v1';
@@ -612,16 +612,34 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [set]);
 
   // ── Profile ───────────────────────────────────────────────────────────────────
-  const updatePersonProfile = useCallback((personId: 'user1' | 'user2', updates: Partial<PersonProfile>) => {
+  const updatePersonProfile = useCallback(async (personId: 'user1' | 'user2', updates: Partial<PersonProfile>, file?: File) => {
+    let avatarUrl = updates.avatarUrl;
+
+    if (file && data.session?.user) {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `avatar-${personId}-${Date.now()}.${fileExt}`;
+      const filePath = `avatars/${data.session.user.id}/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('memories') // Reutilizando o bucket 'memories' existente
+        .upload(filePath, file);
+
+      if (!uploadError) {
+        const { data: { publicUrl } } = supabase.storage
+          .from('memories')
+          .getPublicUrl(filePath);
+        avatarUrl = publicUrl;
+      }
+    }
+
     set((p) => ({
       ...p,
       coupleProfile: {
         ...p.coupleProfile,
-        [personId]: { ...p.coupleProfile[personId], ...updates },
+        [personId]: { ...p.coupleProfile[personId], ...updates, ...(avatarUrl ? { avatarUrl } : {}) },
       },
     }));
-    // TODO: Persistir updates de perfil no Supabase
-  }, [set]);
+  }, [set, data.session?.user]);
 
   return (
     <AppDataContext.Provider value={{

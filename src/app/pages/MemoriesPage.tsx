@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Plus, X, Heart, Star, MapPin, Trash2, MessageSquare,
+  Plus, X, Heart, Star, MapPin, MessageSquare,
   Smile, RefreshCw, Send, CheckCircle2, Camera,
 } from 'lucide-react';
 import {
@@ -10,6 +10,7 @@ import {
   MOODS,
   Memory,
   MoodType,
+  CoupleProfile,
 } from '../context/AppDataContext';
 import { useGamification } from '../context/GamificationContext';
 import confetti from 'canvas-confetti';
@@ -50,7 +51,7 @@ function fileToImageUrl(file: File): Promise<string> {
 // ─── Memories Tab ─────────────────────────────────────────────────────────────
 
 function MemoriasTab() {
-  const { memories, addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory } = useAppData();
+  const { memories, addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory, coupleProfile } = useAppData();
   const { addXP } = useGamification();
   const [showForm, setShowForm] = useState(false);
   const [filterEmotion, setFilterEmotion] = useState<string | 'todos'>('todos');
@@ -59,15 +60,15 @@ function MemoriasTab() {
   const [form, setForm] = useState({
     title: '', description: '', date: new Date().toISOString().split('T')[0],
     location: '', emotion: 'feliz' as Memory['emotion'],
-    liked: false, favorited: false,
+    liked: false, favorited: false, userId: 'user1' as 'user1' | 'user2', // userId será sobrescrito
   });
 
   const resetForm = () => {
     setForm({
       title: '', description: '', date: new Date().toISOString().split('T')[0],
-      location: '', emotion: 'feliz', liked: false, favorited: false,
+      location: '', emotion: 'feliz', liked: false, favorited: false, userId: 'user1',
     });
-    setImageUrls([]);
+    setImageUrls([]); // Limpar as URLs das imagens
     setImageError('');
   };
 
@@ -156,9 +157,10 @@ function MemoriasTab() {
             <MemoryCard
               key={m.id}
               memory={m}
-              onLike={() => toggleMemoryLike(m.id)}
+              onLike={() => toggleMemoryLike(m.id)} // TODO: Passar userId para like
               onFavorite={() => toggleMemoryFavorite(m.id)}
               onDelete={() => deleteMemory(m.id)}
+              coupleProfile={coupleProfile}
             />
           ))}
         </div>
@@ -243,14 +245,16 @@ function MemoriasTab() {
   );
 }
 
-function MemoryCard({ memory, onLike, onFavorite, onDelete }: {
+function MemoryCard({ memory, onLike, onFavorite, onDelete, coupleProfile }: {
   memory: Memory;
   onLike: () => void;
   onFavorite: () => void;
   onDelete: () => void;
+  coupleProfile: CoupleProfile; // Adicionado coupleProfile para obter o nome do usuário
 }) {
   const [showDelete, setShowDelete] = useState(false);
   const emotion = EMOTIONS.find((e) => e.id === memory.emotion);
+  const creatorName = memory.userId ? coupleProfile[memory.userId]?.name : 'Desconhecido';
 
   return (
     <motion.div
@@ -263,6 +267,7 @@ function MemoryCard({ memory, onLike, onFavorite, onDelete }: {
           <p className="text-foreground">{memory.title}</p>
           <div className="flex items-center gap-2 mt-0.5">
             {emotion && <span className="text-sm">{emotion.emoji}</span>}
+            <span className="text-xs text-muted-foreground">por {creatorName}</span>
             <span className="text-xs text-muted-foreground">
               {new Date(memory.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' })}
             </span>

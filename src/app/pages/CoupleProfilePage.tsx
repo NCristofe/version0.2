@@ -20,7 +20,6 @@ import {
   Sparkles,
   Target,
   CheckCircle2,
-  Circle,
   CalendarHeart,
   MessageCircle,
   Camera,
@@ -78,7 +77,7 @@ type TabType = 'conquistas' | 'historico' | 'desafios';
 
 export default function CoupleProfilePage() {
   const { currentUser, changePassword } = useAuth();
-  const { coupleProfile, updatePersonProfile } = useAppData();
+  const { coupleProfile, updatePersonProfile } = useAppData(); // updatePersonProfile já existe no AppDataContext
   const navigate = useNavigate();
   const {
     xp,
@@ -162,7 +161,7 @@ export default function CoupleProfilePage() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        updatePersonProfile(currentUserId, { avatarUrl: reader.result });
+        updatePersonProfile(currentUserId, { avatarUrl: reader.result }); // Usar a nova função
       }
     };
     reader.readAsDataURL(file);

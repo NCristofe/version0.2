@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { supabase } from '../../supabase';
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
-import geovannaAvatar from '../../assets/geovanna-avatar.png';
+import { useAuth } from './AuthContext'; // Importar useAuth
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +38,7 @@ export interface Goal {
   currentValue: number;
   deadline: string;
   status: GoalStatus;
+  userId: 'user1' | 'user2'; // Adicionado userId
   createdAt: string;
 }
 
@@ -47,6 +48,7 @@ export interface CheckIn {
   id: string;
   date: string;
   mood: MoodType;
+  userId: 'user1' | 'user2'; // Adicionado userId
 }
 
 export interface Memory {
@@ -58,6 +60,7 @@ export interface Memory {
   emotion: 'feliz' | 'apaixonado' | 'grato' | 'divertido';
   liked: boolean;
   favorited: boolean;
+  userId: 'user1' | 'user2'; // Adicionado userId
   createdAt: string;
   imageUrls?: string[];
 }
@@ -117,9 +120,8 @@ export interface PersonProfile {
   city: string;
   favoriteColor: string;
   favoriteFood: string;
+  avatarUrl?: string; // Adicionado avatarUrl
   favoriteHobby: string;
-  emoji: string;
-  avatarUrl?: string;
 }
 
 // ─── Category config ─────────────────────────────────────────────────────────
@@ -222,8 +224,7 @@ interface AppDataContextType extends AppData {
   // Streak
   recordActivity: () => void;
   // Profile
-  updateCoupleProfile: (profile: Partial<CoupleProfile>) => void;
-  updatePersonProfile: (userId: 'user1' | 'user2', profile: Partial<PersonProfile>) => void;
+  updatePersonProfile: (personId: 'user1' | 'user2', updates: Partial<PersonProfile>) => void; // Alterado para updatePersonProfile
 }
 
 const STORAGE_KEY = 'nosso_amor_appdata_v1';
@@ -263,8 +264,8 @@ function defaultData(): AppData {
     checkIns: [],
     streak: { current: 0, longest: 0, lastActivityDate: '' },
     coupleProfile: {
-      user1: { name: 'Natanael', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '', emoji: '👨' },
-      user2: { name: 'Geovanna', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '', emoji: '👩', avatarUrl: geovannaAvatar },
+      user1: { name: 'Natanael', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '', avatarUrl: '' },
+      user2: { name: 'Geovanna', nickname: '', city: '', favoriteColor: '', favoriteFood: '', favoriteHobby: '', avatarUrl: '' },
       coupleName: 'Nosso Amor',
       startDate: '2025-08-23',
     },
@@ -285,12 +286,6 @@ function loadData(): AppData {
       return {
         ...def,
         ...parsed,
-        coupleProfile: {
-          ...def.coupleProfile,
-          ...parsed.coupleProfile,
-          user1: { ...def.coupleProfile.user1, ...parsed.coupleProfile?.user1 },
-          user2: { ...def.coupleProfile.user2, ...parsed.coupleProfile?.user2 },
-        },
         questions: def.questions.map((dq: CoupleQuestion) => {
           const existing = parsed.questions?.find((q: CoupleQuestion) => q.id === dq.id);
           return existing ?? dq;
@@ -311,6 +306,7 @@ const AppDataContext = createContext<AppDataContextType | undefined>(undefined);
 
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<AppData>(loadData);
+  const { currentUser } = useAuth(); // Obter o usuário logado
 
   // Sincronização Inicial com Supabase
   useEffect(() => {
@@ -429,10 +425,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [data.events]);
 
   // ── Goals ────────────────────────────────────────────────────────────────────
-  const addGoal = useCallback(async (g: Omit<Goal, 'id' | 'createdAt'>) => {
+  const addGoal = useCallback(async (g: Omit<Goal, 'id' | 'createdAt' | 'userId'>) => {
     const newId = uid();
     const createdAt = new Date().toISOString();
-    set((p) => ({ ...p, goals: [...p.goals, { ...g, id: newId, createdAt }] }));
+    if (!currentUser) return; // Não permite adicionar sem usuário logado
+    set((p) => ({ ...p, goals: [...p.goals, { ...g, id: newId, createdAt, userId: currentUser as 'user1' | 'user2' }] }));
 
     if (data.session?.user) {
       await supabase.from('goals').insert([{
@@ -443,9 +440,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         current_value: g.currentValue,
         deadline: g.deadline,
         status: g.status
+        // TODO: Adicionar couple_id e user_id no Supabase para metas
       }]);
     }
-  }, [set]);
+  }, [set, currentUser, data.session?.user]);
 
   const updateGoal = useCallback(async (id: string, updates: Partial<Goal>) => {
     set((p) => ({ ...p, goals: p.goals.map((g) => g.id === id ? { ...g, ...updates } : g) }));
@@ -462,7 +460,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [set]);
 
   // ── Memories ─────────────────────────────────────────────────────────────────
-  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt'>, files?: File[]) => {
+  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt' | 'userId'>, files?: File[]) => {
+    if (!currentUser) return; // Não permite adicionar sem usuário logado
     let uploadedUrls: string[] = m.imageUrls || [];
 
     if (data.session?.user) {
@@ -494,16 +493,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         emotion: m.emotion,
         location: m.location,
         image_urls: uploadedUrls,
-        user_id: data.session.user.id
+        user_id: data.session.user.id // Este user_id do Supabase é diferente do 'user1'/'user2'
       }]);
     }
 
     // Atualização do estado local (UI)
-    set((p) => ({ 
-      ...p, 
-      memories: [{ ...m, imageUrls: uploadedUrls, id: uid(), createdAt: new Date().toISOString() }, ...p.memories] 
+    set((p) => ({
+      ...p,
+      memories: [{ ...m, imageUrls: uploadedUrls, id: uid(), createdAt: new Date().toISOString(), userId: currentUser as 'user1' | 'user2' }, ...p.memories]
     }));
-  }, [set]);
+  }, [set, currentUser, data.session?.user]);
 
   const toggleMemoryLike = useCallback((id: string) => {
     set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, liked: !m.liked } : m) }));
@@ -583,14 +582,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   // ── Check-in ──────────────────────────────────────────────────────────────────
   const addCheckIn = useCallback((mood: MoodType) => {
     const date = today();
+    if (!currentUser) return; // Não permite adicionar sem usuário logado
     set((p) => ({
       ...p,
       checkIns: [
-        { id: uid(), date, mood },
+        { id: uid(), date, mood, userId: currentUser as 'user1' | 'user2' },
         ...p.checkIns.filter((c) => c.date !== date),
       ],
     }));
-  }, [set]);
+    // TODO: Persistir check-in no Supabase com userId
+  }, [set, currentUser]);
 
   const getTodayCheckIn = useCallback((): CheckIn | null => {
     return data.checkIns.find((c) => c.date === today()) ?? null;
@@ -611,21 +612,15 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [set]);
 
   // ── Profile ───────────────────────────────────────────────────────────────────
-  const updateCoupleProfile = useCallback((profile: Partial<CoupleProfile>) => {
-    set((p) => ({ ...p, coupleProfile: { ...p.coupleProfile, ...profile } }));
-  }, [set]);
-
-  const updatePersonProfile = useCallback((userId: 'user1' | 'user2', profile: Partial<PersonProfile>) => {
+  const updatePersonProfile = useCallback((personId: 'user1' | 'user2', updates: Partial<PersonProfile>) => {
     set((p) => ({
       ...p,
       coupleProfile: {
         ...p.coupleProfile,
-        [userId]: {
-          ...p.coupleProfile[userId],
-          ...profile,
-        },
+        [personId]: { ...p.coupleProfile[personId], ...updates },
       },
     }));
+    // TODO: Persistir updates de perfil no Supabase
   }, [set]);
 
   return (
@@ -640,7 +635,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       answerQuestion, getDailyQuestion, getRandomQuestion,
       addCheckIn, getTodayCheckIn,
       recordActivity,
-      updateCoupleProfile,
       updatePersonProfile,
     }}>
       {children}

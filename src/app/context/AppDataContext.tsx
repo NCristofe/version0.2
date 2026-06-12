@@ -297,7 +297,11 @@ function loadData(): AppData {
 }
 
 function saveData(data: AppData) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Falha ao salvar no localStorage (Cota excedida). Limpe seu cache.', e);
+  }
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────
@@ -315,7 +319,22 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       setData(prev => ({ ...prev, session }));
 
       if (session?.user) {
+        setData(prev => ({ ...prev, loading: true }));
         try {
+          // Tenta carregar o perfil do casal persistido no Supabase
+          const { data: profile, error: pError } = await supabase
+            .from('profiles')
+            .select('couple_profile')
+            .eq('user_id', session.user.id)
+            .single();
+
+          if (profile?.couple_profile && !pError) {
+            setData(prev => ({
+              ...prev,
+              coupleProfile: profile.couple_profile as CoupleProfile
+            }));
+          }
+
           // Exemplo de busca de dados reais ao iniciar
           const { data: events } = await supabase
             .from('events')
@@ -632,14 +651,31 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const profileUpdates = {
+      ...updates,
+      ...(avatarUrl ? { avatarUrl } : {}),
+    };
+
     set((p) => ({
       ...p,
       coupleProfile: {
         ...p.coupleProfile,
-        [personId]: { ...p.coupleProfile[personId], ...updates, ...(avatarUrl ? { avatarUrl } : {}) },
+        [personId]: { ...p.coupleProfile[personId], ...profileUpdates },
       },
     }));
-  }, [set, data.session?.user]);
+
+    // Persistir os dados do perfil no Supabase para que não se percam ao deslogar
+    if (data.session?.user) {
+      await supabase.from('profiles').upsert({
+        user_id: data.session.user.id,
+        couple_profile: {
+          ...data.coupleProfile,
+          [personId]: { ...data.coupleProfile[personId], ...profileUpdates }
+        },
+        updated_at: new Date().toISOString()
+      });
+    }
+  }, [set, data.session?.user, data.coupleProfile]);
 
   return (
     <AppDataContext.Provider value={{

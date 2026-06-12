@@ -2,7 +2,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
+import { useAppData } from '../context/AppDataContext';
 import { useGamification, LEVELS } from '../context/GamificationContext';
+import { UserAvatar } from '../components/UserAvatar';
 import {
   Trophy,
   Star,
@@ -73,6 +75,7 @@ type TabType = 'conquistas' | 'historico' | 'desafios';
 
 export default function CoupleProfilePage() {
   const { currentUser } = useAuth();
+  const { coupleProfile, updatePersonProfile } = useAppData();
   const navigate = useNavigate();
   const {
     xp,
@@ -94,7 +97,10 @@ export default function CoupleProfilePage() {
   const prevLevel = React.useRef(currentLevel.level);
 
   const daysTogether = getDaysTogether();
-  const otherUser = currentUser === 'Eu' ? 'Amor' : 'Eu';
+  const currentUserId = currentUser === 'user2' ? 'user2' : 'user1';
+  const otherUserId = currentUserId === 'user1' ? 'user2' : 'user1';
+  const currentProfile = coupleProfile[currentUserId];
+  const otherProfile = coupleProfile[otherUserId];
   const loveMeter = getLoveMeterLevel(daysTogether);
 
   // reset daily challenges if new day
@@ -142,6 +148,20 @@ export default function CoupleProfilePage() {
     setTimeout(() => setNewXPPop(null), 2000);
   }, [dailyState, addXP]);
 
+  const changeProfileImage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        updatePersonProfile(currentUserId, { avatarUrl: reader.result });
+      }
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
   const dailyCompletedCount = dailyState.completed.length;
   const dailyTotalCount = DAILY_CHALLENGES_POOL.length;
 
@@ -163,9 +183,27 @@ export default function CoupleProfilePage() {
                 initial={{ scale: 0, rotate: -20 }}
                 animate={{ scale: 1, rotate: 0 }}
                 transition={{ type: 'spring', delay: 0.1 }}
-                className="w-20 h-20 rounded-full bg-white/25 backdrop-blur-sm border-4 border-white/70 flex items-center justify-center shadow-xl"
+                className="relative"
               >
-                <span className="text-4xl">👩</span>
+                <UserAvatar
+                  userId={currentUserId}
+                  className="w-20 h-20 border-4 border-white/70 shadow-xl"
+                  fallbackClassName="bg-white/25 text-4xl text-white"
+                />
+                <label
+                  htmlFor="profile-avatar-upload"
+                  title="Mudar foto de perfil"
+                  className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-white text-primary border border-white/80 shadow-lg flex items-center justify-center cursor-pointer"
+                >
+                  <Camera size={16} />
+                </label>
+                <input
+                  id="profile-avatar-upload"
+                  type="file"
+                  accept="image/*"
+                  onChange={changeProfileImage}
+                  className="sr-only"
+                />
               </motion.div>
 
               <motion.div
@@ -181,9 +219,13 @@ export default function CoupleProfilePage() {
                 initial={{ scale: 0, rotate: 20 }}
                 animate={{ scale: 1, rotate: 0 }}
                 transition={{ type: 'spring', delay: 0.2 }}
-                className="w-20 h-20 rounded-full bg-white/25 backdrop-blur-sm border-4 border-white/70 flex items-center justify-center shadow-xl"
+                className="relative"
               >
-                <span className="text-4xl">👨</span>
+                <UserAvatar
+                  userId={otherUserId}
+                  className="w-20 h-20 border-4 border-white/70 shadow-xl"
+                  fallbackClassName="bg-white/25 text-4xl text-white"
+                />
               </motion.div>
             </div>
 
@@ -193,7 +235,7 @@ export default function CoupleProfilePage() {
               transition={{ delay: 0.3 }}
             >
               <h1 className="text-2xl text-white mb-1 drop-shadow">
-                {currentUser} & {otherUser}
+                {currentProfile.name} & {otherProfile.name}
               </h1>
               <p className="text-white/80 text-sm">{daysTogether} dias de amor juntos 💕</p>
             </motion.div>

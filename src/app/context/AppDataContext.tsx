@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '../../supabase';
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { useAuth } from './AuthContext'; // Importar useAuth
@@ -228,6 +229,12 @@ interface AppDataContextType extends AppData {
 }
 
 const STORAGE_KEY = 'nosso_amor_appdata_v1';
+// Fotos ficam numa chave separada: assim, se elas estourarem a cota do
+// localStorage, o resto dos dados (metas, eventos, mensagens, check-ins)
+// continua sendo salvo normalmente.
+const IMAGES_STORAGE_KEY = 'nosso_amor_appdata_v1_images';
+
+type ImageStore = Record<string, string[]>; // memoryId -> imageUrls
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -276,16 +283,30 @@ function defaultData(): AppData {
   };
 }
 
+function loadImages(): ImageStore {
+  try {
+    const raw = localStorage.getItem(IMAGES_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {};
+}
+
 function loadData(): AppData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       const def = defaultData();
+      const images = loadImages();
+      const memories = (parsed.memories ?? def.memories).map((m: Memory) => ({
+        ...m,
+        imageUrls: images[m.id] ?? m.imageUrls ?? [],
+      }));
       // merge questions to always have full pool
       return {
         ...def,
         ...parsed,
+        memories,
         questions: def.questions.map((dq: CoupleQuestion) => {
           const existing = parsed.questions?.find((q: CoupleQuestion) => q.id === dq.id);
           return existing ?? dq;
@@ -297,10 +318,29 @@ function loadData(): AppData {
 }
 
 function saveData(data: AppData) {
+  // Salva as fotos separadamente do restante dos dados (ver IMAGES_STORAGE_KEY).
+  const images: ImageStore = {};
+  const lightMemories = data.memories.map((m) => {
+    if (m.imageUrls && m.imageUrls.length > 0) {
+      images[m.id] = m.imageUrls;
+    }
+    const { imageUrls, ...rest } = m;
+    return rest;
+  });
+
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, memories: lightMemories }));
   } catch (e) {
-    console.warn('Falha ao salvar no localStorage (Cota excedida). Limpe seu cache.', e);
+    console.error('Falha ao salvar dados no localStorage.', e);
+    toast.error('Não foi possível salvar seus dados. O armazenamento do navegador está cheio.');
+    return;
+  }
+
+  try {
+    localStorage.setItem(IMAGES_STORAGE_KEY, JSON.stringify(images));
+  } catch (e) {
+    console.warn('Falha ao salvar fotos no localStorage (cota excedida).', e);
+    toast.error('Suas fotos não couberam no armazenamento do navegador, mas o restante dos dados foi salvo. Tente remover fotos antigas de memórias.');
   }
 }
 

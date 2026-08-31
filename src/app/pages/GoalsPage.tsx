@@ -21,7 +21,7 @@ type TabType = 'metas' | 'capsula' | 'desejos';
 
 function GoalsTab() {
   const { goals, addGoal, updateGoal, deleteGoal } = useAppData();
-  const { addXP, unlockAchievement } = useGamification();
+  const { addXP, completeDailyChallenge } = useGamification();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     name: '', description: '', category: 'experiencia' as GoalCategory,
@@ -40,6 +40,7 @@ function GoalsTab() {
       status: 'em_andamento',
     });
     addXP(15, 'Nova meta criada 🎯');
+    completeDailyChallenge('dc3', 20, 'Marco especial registrado ⭐');
     setShowForm(false);
     setForm({ name: '', description: '', category: 'experiencia', targetValue: '', currentValue: '', deadline: '', status: 'em_andamento' });
   };
@@ -47,7 +48,6 @@ function GoalsTab() {
   const completeGoal = (goal: Goal) => {
     updateGoal(goal.id, { status: 'concluida', currentValue: goal.targetValue ?? goal.currentValue });
     addXP(100, `Meta concluída: ${goal.name} 🏆`);
-    unlockAchievement('quiz_first');
     confetti({ particleCount: 200, spread: 120, origin: { y: 0.5 }, colors: ['#FF6B9D', '#FFB6C1', '#FFC8DD'] });
   };
 

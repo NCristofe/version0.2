@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Sparkles, Gift, Heart, Star, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
+import { useGamification } from '../context/GamificationContext';
 
 interface QuizQuestion {
   question: string;

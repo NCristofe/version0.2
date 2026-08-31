@@ -8,72 +8,18 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router';
-
-const START_DATE = new Date('2025-08-23T00:00:00');
-const ONE_YEAR_DATE = new Date('2026-08-23T00:00:00');
-
-interface TimeLeft {
-  years: number;
-  months: number;
-  days: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
-}
-
-function calculateTimeElapsed(): TimeLeft {
-  const now = new Date();
-  const diff = now.getTime() - START_DATE.getTime();
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  const months = Math.floor(days / 30.44);
-  const years = Math.floor(days / 365.25);
-
-  return {
-    years,
-    months: months % 12,
-    days: Math.floor((days % 365.25) % 30.44),
-    hours: hours % 24,
-    minutes: minutes % 60,
-    seconds: seconds % 60,
-  };
-}
-
-function calculateCountdown(): TimeLeft {
-  const now = new Date();
-  const diff = ONE_YEAR_DATE.getTime() - now.getTime();
-
-  if (diff <= 0) {
-    return { years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 };
-  }
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  const months = Math.floor(days / 30.44);
-
-  return {
-    years: 0,
-    months: months,
-    days: days % 30,
-    hours: hours % 24,
-    minutes: minutes % 60,
-    seconds: seconds % 60,
-  };
-}
+import { parseStartDate, getTimeTogether, getNextAnniversary, getCountdownTo, formatAnniversaryLabel, formatDatePt } from '../lib/anniversary';
 
 export default function HomePage() {
   const { logout } = useAuth();
   const navigate = useNavigate();
   const { xp, currentLevel, xpProgress, xpToNextLevel } = useGamification();
-  const { streak, getTodayCheckIn, addCheckIn, recordActivity, getUpcomingEvents, memories, goals } = useAppData();
+  const { streak, getTodayCheckIn, addCheckIn, recordActivity, getUpcomingEvents, memories, goals, coupleProfile } = useAppData();
 
-  const [timeElapsed, setTimeElapsed] = useState(calculateTimeElapsed());
-  const [countdown, setCountdown] = useState(calculateCountdown());
+  const startDate = parseStartDate(coupleProfile.startDate);
+  const [timeElapsed, setTimeElapsed] = useState(() => getTimeTogether(startDate));
+  const [nextAnniversary, setNextAnniversary] = useState(() => getNextAnniversary(startDate));
+  const [countdown, setCountdown] = useState(() => getCountdownTo(nextAnniversary.date));
   const [showSpecialDates, setShowSpecialDates] = useState(false);
 
   const todayCheckIn = getTodayCheckIn();
@@ -83,15 +29,20 @@ export default function HomePage() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setTimeElapsed(calculateTimeElapsed());
-      setCountdown(calculateCountdown());
+      const now = new Date();
+      setTimeElapsed(getTimeTogether(startDate, now));
+      // Recalcula o próximo aniversário a cada tick: assim que o atual passar,
+      // o alvo avança sozinho pro ano seguinte, sem precisar mexer no código.
+      const anniversary = getNextAnniversary(startDate, now);
+      setNextAnniversary(anniversary);
+      setCountdown(getCountdownTo(anniversary.date, now));
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [startDate.getTime()]);
 
   const specialDates = [
-    { date: '23 de Agosto de 2025', event: 'Início do nosso amor', emoji: '💕' },
-    { date: '23 de Agosto de 2026', event: '1 ano de namoro', emoji: '🎉' },
+    { date: formatDatePt(startDate), event: 'Início do nosso amor', emoji: '💕' },
+    { date: formatDatePt(nextAnniversary.date), event: `${formatAnniversaryLabel(nextAnniversary.yearNumber)} de namoro`, emoji: '🎉' },
   ];
 
   const handleMood = (mood: MoodType) => {
@@ -210,7 +161,7 @@ export default function HomePage() {
             <Heart className="w-12 h-12 text-primary mx-auto mb-3" fill="currentColor" />
           </motion.div>
           <h2 className="text-2xl text-primary mb-1">Juntos há</h2>
-          <p className="text-sm text-muted-foreground">Desde 23 de Agosto de 2025</p>
+          <p className="text-sm text-muted-foreground">Desde {formatDatePt(startDate)}</p>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
@@ -232,7 +183,7 @@ export default function HomePage() {
       >
         <div className="flex items-center gap-3 mb-4">
           <Clock className="w-6 h-6 text-primary" />
-          <h3 className="text-lg">Faltam para 1 ano juntos</h3>
+          <h3 className="text-lg">Faltam para {formatAnniversaryLabel(nextAnniversary.yearNumber)} juntos</h3>
         </div>
 
         <div className="grid grid-cols-2 gap-3">

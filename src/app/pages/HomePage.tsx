@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useGamification } from '../context/GamificationContext';
 import { useAppData, MOODS, MoodType } from '../context/AppDataContext';
 import {
   Heart, Calendar, LogOut, Clock, Flame, Zap, ChevronRight,
-  Target, Sparkles, BookHeart,
+  Target, BookHeart,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router';

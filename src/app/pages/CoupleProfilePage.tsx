@@ -104,9 +104,7 @@ export default function CoupleProfilePage() {
 
   const daysTogether = getDaysTogether();
   const currentUserId = currentUser === 'user2' ? 'user2' : 'user1';
-  const otherUserId = currentUserId === 'user1' ? 'user2' : 'user1';
   const currentProfile = coupleProfile[currentUserId];
-  const otherProfile = coupleProfile[otherUserId];
   const loveMeter = getLoveMeterLevel(daysTogether);
 
   // reset daily challenges if new day
@@ -201,57 +199,33 @@ export default function CoupleProfilePage() {
 
         <div className="relative p-6 pt-10 pb-12 text-white">
           <div className="text-center mb-5">
-            {/* Couple Avatars */}
-            <div className="flex items-center justify-center gap-4 mb-5">
-              <motion.div
-                initial={{ scale: 0, rotate: -20 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: 'spring', delay: 0.1 }}
-                className="relative"
+            {/* My Avatar */}
+            <motion.div
+              initial={{ scale: 0, rotate: -20 }}
+              animate={{ scale: 1, rotate: 0 }}
+              transition={{ type: 'spring', delay: 0.1 }}
+              className="relative inline-block mb-5"
+            >
+              <UserAvatar
+                userId={currentUserId}
+                className="w-24 h-24 border-4 border-white/70 shadow-xl"
+                fallbackClassName="bg-white/25 text-4xl text-white"
+              />
+              <label
+                htmlFor="profile-avatar-upload"
+                title="Mudar foto de perfil"
+                className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-white text-primary border border-white/80 shadow-lg flex items-center justify-center cursor-pointer"
               >
-                <UserAvatar
-                  userId={currentUserId}
-                  className="w-20 h-20 border-4 border-white/70 shadow-xl"
-                  fallbackClassName="bg-white/25 text-4xl text-white"
-                />
-                <label
-                  htmlFor="profile-avatar-upload"
-                  title="Mudar foto de perfil"
-                  className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-white text-primary border border-white/80 shadow-lg flex items-center justify-center cursor-pointer"
-                >
-                  <Camera size={16} />
-                </label>
-                <input
-                  id="profile-avatar-upload"
-                  type="file"
-                  accept="image/*"
-                  onChange={changeProfileImage}
-                  className="sr-only"
-                />
-              </motion.div>
-
-              <motion.div
-                animate={{ scale: [1, 1.25, 1] }}
-                transition={{ duration: 1.6, repeat: Infinity }}
-                className="flex flex-col items-center"
-              >
-                <Heart className="w-8 h-8 text-white drop-shadow-lg" fill="currentColor" />
-                <span className="text-[10px] text-white/80 mt-0.5">{daysTogether}d</span>
-              </motion.div>
-
-              <motion.div
-                initial={{ scale: 0, rotate: 20 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: 'spring', delay: 0.2 }}
-                className="relative"
-              >
-                <UserAvatar
-                  userId={otherUserId}
-                  className="w-20 h-20 border-4 border-white/70 shadow-xl"
-                  fallbackClassName="bg-white/25 text-4xl text-white"
-                />
-              </motion.div>
-            </div>
+                <Camera size={16} />
+              </label>
+              <input
+                id="profile-avatar-upload"
+                type="file"
+                accept="image/*"
+                onChange={changeProfileImage}
+                className="sr-only"
+              />
+            </motion.div>
 
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -259,9 +233,9 @@ export default function CoupleProfilePage() {
               transition={{ delay: 0.3 }}
             >
               <h1 className="text-2xl text-white mb-1 drop-shadow">
-                {currentProfile.name} & {otherProfile.name}
+                {currentProfile.name}
               </h1>
-              <p className="text-white/80 text-sm">{daysTogether} dias de amor juntos 💕</p>
+              <p className="text-white/80 text-sm">Seu perfil 💕</p>
             </motion.div>
           </div>
 

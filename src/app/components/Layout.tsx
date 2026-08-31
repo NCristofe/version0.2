@@ -1,4 +1,3 @@
-import React from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router';
 import { Home, CalendarDays, Target, BookHeart, Trophy } from 'lucide-react';
 import { motion } from 'motion/react';

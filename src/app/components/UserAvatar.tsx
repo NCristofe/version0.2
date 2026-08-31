@@ -1,4 +1,3 @@
-import React from 'react';
 import { useAppData } from '../context/AppDataContext';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { cn } from './ui/utils';
@@ -13,6 +12,7 @@ interface UserAvatarProps {
 export function UserAvatar({ userId, className, fallbackClassName, alt }: UserAvatarProps) {
   const { coupleProfile } = useAppData();
   const profile = coupleProfile[userId];
+  const initial = (profile.nickname || profile.name || '?').charAt(0).toUpperCase();
 
   return (
     <Avatar className={className}>
@@ -20,7 +20,7 @@ export function UserAvatar({ userId, className, fallbackClassName, alt }: UserAv
         <AvatarImage src={profile.avatarUrl} alt={alt ?? profile.name} />
       ) : (
         <AvatarFallback className={cn('text-3xl', fallbackClassName)}>
-          {profile.emoji}
+          {initial}
         </AvatarFallback>
       )}
     </Avatar>

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Plus, X, Target, Clock, ChevronRight, Lock, Unlock, Trash2,
-  TrendingUp, Heart, Star,
+  Plus, X, Clock, ChevronRight, Lock, Unlock, Trash2,
+  TrendingUp, Star,
 } from 'lucide-react';
 import {
   useAppData,
@@ -23,7 +23,6 @@ function GoalsTab() {
   const { goals, addGoal, updateGoal, deleteGoal } = useAppData();
   const { addXP, unlockAchievement } = useGamification();
   const [showForm, setShowForm] = useState(false);
-  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [form, setForm] = useState({
     name: '', description: '', category: 'experiencia' as GoalCategory,
     targetValue: '', currentValue: '', deadline: '', status: 'em_andamento' as Goal['status'],
@@ -474,7 +473,6 @@ function CapsuleCard({ capsule, canOpen, onOpen }: { capsule: TimeCapsule; canOp
 
 function WishesTab() {
   const { wishes, addWish, deleteWish } = useAppData();
-  const { currentUser } = { currentUser: 'Eu' }; // simplified
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     name: '', description: '', link: '', category: 'Geral', priority: 'media' as WishItem['priority'],

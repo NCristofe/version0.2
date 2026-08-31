@@ -41,12 +41,15 @@ function getLoveMeterLevel(days: number) {
   return { label: 'Amor Nascente', color: '#FFB6C1', emoji: '🌱', percent: 15 };
 }
 
+// Os desafios só ficam marcados como concluídos quando a ação real acontece
+// em outra tela (enviar mensagem, adicionar foto, criar meta, terminar o quiz,
+// responder a pergunta do dia) - ver useGamification().completeDailyChallenge.
 const DAILY_CHALLENGES_POOL = [
-  { id: 'dc1', text: 'Envie uma mensagem carinhosa hoje', emoji: '💌', xp: 10, icon: MessageCircle },
-  { id: 'dc2', text: 'Adicione uma foto à galeria', emoji: '📸', xp: 15, icon: Camera },
-  { id: 'dc3', text: 'Registre um marco especial', emoji: '⭐', xp: 20, icon: CalendarHeart },
-  { id: 'dc4', text: 'Faça o Quiz do Amor', emoji: '🧠', xp: 25, icon: Sparkles },
-  { id: 'dc5', text: 'Diga o quanto você ama', emoji: '❤️', xp: 10, icon: Heart },
+  { id: 'dc1', text: 'Envie uma mensagem carinhosa hoje', emoji: '💌', xp: 10, icon: MessageCircle, route: '/messages' },
+  { id: 'dc2', text: 'Adicione uma foto à galeria', emoji: '📸', xp: 15, icon: Camera, route: '/memories' },
+  { id: 'dc3', text: 'Registre um marco especial (nova meta)', emoji: '⭐', xp: 20, icon: CalendarHeart, route: '/goals' },
+  { id: 'dc4', text: 'Faça o Quiz do Amor', emoji: '🧠', xp: 25, icon: Sparkles, route: '/extras' },
+  { id: 'dc5', text: 'Responda a pergunta do dia', emoji: '❤️', xp: 10, icon: Heart, route: '/memories' },
 ];
 
 const surprises = [
@@ -58,20 +61,6 @@ const surprises = [
   { text: 'Cada dia ao seu lado é um presente! 🎁', emoji: '🫶' },
   { text: 'Nossa história é a mais bonita! 📖', emoji: '💓' },
 ];
-
-const DAILY_STORAGE_KEY = 'daily_challenges_v1';
-
-function getTodayKey() {
-  return new Date().toISOString().split('T')[0];
-}
-
-function loadDailyChallenges(): { date: string; completed: string[] } {
-  try {
-    const raw = localStorage.getItem(DAILY_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { date: getTodayKey(), completed: [] };
-}
 
 type TabType = 'conquistas' | 'historico' | 'desafios';
 
@@ -89,12 +78,12 @@ export default function CoupleProfilePage() {
     stats,
     unlockAchievement,
     addXP,
+    dailyChallenges,
   } = useGamification();
 
   const [activeTab, setActiveTab] = useState<TabType>('conquistas');
   const [surprise, setSurprise] = useState<{ text: string; emoji: string } | null>(null);
   const [showLevelUp, setShowLevelUp] = useState(false);
-  const [dailyState, setDailyState] = useState(loadDailyChallenges);
   const [newXPPop, setNewXPPop] = useState<string | null>(null);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
@@ -106,16 +95,6 @@ export default function CoupleProfilePage() {
   const currentUserId = currentUser === 'user2' ? 'user2' : 'user1';
   const currentProfile = coupleProfile[currentUserId];
   const loveMeter = getLoveMeterLevel(daysTogether);
-
-  // reset daily challenges if new day
-  useEffect(() => {
-    const today = getTodayKey();
-    if (dailyState.date !== today) {
-      const fresh = { date: today, completed: [] };
-      setDailyState(fresh);
-      localStorage.setItem(DAILY_STORAGE_KEY, JSON.stringify(fresh));
-    }
-  }, [dailyState.date]);
 
   useEffect(() => {
     unlockAchievement('profile_visited');
@@ -137,20 +116,11 @@ export default function CoupleProfilePage() {
     const pick = surprises[Math.floor(Math.random() * surprises.length)];
     setSurprise(pick);
     addXP(5, 'Mensagem Surpresa 🎁');
+    setNewXPPop('+5 XP');
     confetti({ particleCount: 150, spread: 100, origin: { y: 0.5 }, colors: ['#FF6B9D', '#FFB6C1', '#FFC8DD'] });
     setTimeout(() => setSurprise(null), 3000);
-  };
-
-  const completeChallenge = useCallback((challengeId: string, xpAmount: number, label: string) => {
-    if (dailyState.completed.includes(challengeId)) return;
-    const updated = { ...dailyState, completed: [...dailyState.completed, challengeId] };
-    setDailyState(updated);
-    localStorage.setItem(DAILY_STORAGE_KEY, JSON.stringify(updated));
-    addXP(xpAmount, label);
-    setNewXPPop(`+${xpAmount} XP`);
-    confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 }, colors: ['#FF6B9D', '#FFB6C1'] });
     setTimeout(() => setNewXPPop(null), 2000);
-  }, [dailyState, addXP]);
+  };
 
   const changeProfileImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

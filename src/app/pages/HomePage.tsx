@@ -9,6 +9,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router';
 import { parseStartDate, getTimeTogether, getNextAnniversary, getCountdownTo, formatAnniversaryLabel, formatDatePt } from '../lib/anniversary';
+import { UserAvatar } from '../components/UserAvatar';
 
 export default function HomePage() {
   const { logout } = useAuth();
@@ -65,6 +66,34 @@ export default function HomePage() {
           <LogOut size={20} />
         </button>
       </div>
+
+      {/* Couple Card */}
+      <motion.button
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        onClick={() => navigate('/profile')}
+        className="w-full flex items-center justify-center gap-4 bg-card rounded-3xl p-4 mb-5 border border-border shadow-sm"
+      >
+        <div className="flex flex-col items-center gap-1.5 min-w-0">
+          <UserAvatar userId="user1" className="w-14 h-14 border-2 border-primary/20" fallbackClassName="bg-primary/10 text-lg" />
+          <span className="text-xs text-foreground truncate max-w-[80px]">{coupleProfile.user1.name}</span>
+        </div>
+
+        <div className="flex flex-col items-center gap-0.5">
+          <motion.div
+            animate={{ scale: [1, 1.2, 1] }}
+            transition={{ duration: 1.6, repeat: Infinity }}
+          >
+            <Heart className="w-6 h-6 text-primary" fill="currentColor" />
+          </motion.div>
+          <span className="text-[10px] text-muted-foreground">{coupleProfile.coupleName}</span>
+        </div>
+
+        <div className="flex flex-col items-center gap-1.5 min-w-0">
+          <UserAvatar userId="user2" className="w-14 h-14 border-2 border-primary/20" fallbackClassName="bg-primary/10 text-lg" />
+          <span className="text-xs text-foreground truncate max-w-[80px]">{coupleProfile.user2.name}</span>
+        </div>
+      </motion.button>
 
       {/* Streak + XP Row */}
       <div className="grid grid-cols-2 gap-3 mb-5">

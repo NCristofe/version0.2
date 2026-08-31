@@ -435,7 +435,7 @@ export default function CoupleProfilePage() {
 
           <div className="space-y-3">
             {DAILY_CHALLENGES_POOL.map((challenge, idx) => {
-              const done = dailyState.completed.includes(challenge.id);
+              const done = dailyChallenges.completed.includes(challenge.id);
               const ChallengeIcon = challenge.icon;
               return (
                 <motion.button
@@ -444,8 +444,11 @@ export default function CoupleProfilePage() {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.55 + idx * 0.07 }}
                   onClick={() => {
-                    if (!done) completeChallenge(challenge.id, challenge.xp, challenge.text);
+                    // Não dá pra "marcar como feito" aqui - o XP só entra quando
+                    // a ação de verdade acontece na tela certa.
+                    if (!done) navigate(challenge.route);
                   }}
+                  title={done ? 'Concluído hoje' : `Ir para ${challenge.route}`}
                   className={`w-full flex items-center gap-3 p-3.5 rounded-2xl border transition-all text-left ${
                     done
                       ? 'bg-primary/8 border-primary/20 opacity-70'

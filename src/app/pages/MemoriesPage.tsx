@@ -52,7 +52,7 @@ function fileToImageUrl(file: File): Promise<string> {
 
 function MemoriasTab() {
   const { memories, addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory, coupleProfile } = useAppData();
-  const { addXP } = useGamification();
+  const { addXP, completeDailyChallenge } = useGamification();
   const [showForm, setShowForm] = useState(false);
   const [filterEmotion, setFilterEmotion] = useState<string | 'todos'>('todos');
   const [imageUrls, setImageUrls] = useState<string[]>([]);
@@ -102,6 +102,9 @@ function MemoriasTab() {
     if (!form.title.trim()) return;
     await addMemory(form, selectedFiles);
     addXP(20, 'Memória criada 💖');
+    if (selectedFiles.length > 0) {
+      completeDailyChallenge('dc2', 15, 'Foto adicionada à galeria 📸');
+    }
     confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 }, colors: ['#FF6B9D', '#FFB6C1'] });
     setShowForm(false);
     resetForm();
@@ -342,7 +345,7 @@ function MemoryCard({ memory, onLike, onFavorite, onDelete, coupleProfile }: {
 
 function PerguntasTab() {
   const { questions, getDailyQuestion, getRandomQuestion, answerQuestion } = useAppData();
-  const { addXP } = useGamification();
+  const { addXP, completeDailyChallenge } = useGamification();
   const [currentQ, setCurrentQ] = useState(() => getDailyQuestion());
   const [answer, setAnswer] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -354,6 +357,7 @@ function PerguntasTab() {
     if (!answer.trim()) return;
     answerQuestion(currentQ.id, answer);
     addXP(10, 'Pergunta respondida 💬');
+    completeDailyChallenge('dc5', 10, 'Pergunta do dia respondida ❤️');
     setSubmitted(true);
     setAnswer('');
   };

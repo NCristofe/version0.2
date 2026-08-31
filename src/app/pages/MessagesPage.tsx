@@ -56,7 +56,7 @@ function formatBytes(bytes: number) {
 export default function MessagesPage() {
   const { currentUser } = useAuth();
   const { coupleProfile, messages, sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage } = useAppData();
-  const { incrementStat, unlockAchievement } = useGamification();
+  const { incrementStat, unlockAchievement, completeDailyChallenge } = useGamification();
   const currentUserId: UserId = currentUser === 'user2' ? 'user2' : 'user1';
   const otherUserId: UserId = currentUserId === 'user1' ? 'user2' : 'user1';
 
@@ -127,6 +127,7 @@ export default function MessagesPage() {
     await sendMessage({ text: trimmed, replyTo: replyTo ?? undefined, attachments: filesToSend });
     incrementStat('messagesSent');
     unlockAchievement('first_message');
+    completeDailyChallenge('dc1', 10, 'Mensagem carinhosa enviada 💌');
   };
 
   const attachFiles = (event: React.ChangeEvent<HTMLInputElement>) => {

@@ -604,30 +604,35 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt' | 'userId'>, files?: File[]) => {
     if (!currentUser) return; // Não permite adicionar sem usuário logado
     let uploadedUrls: string[] = m.imageUrls || [];
+    let insertedId: string | null = null;
 
     if (session?.user) {
       // 1. Upload das imagens para o Storage (se houver arquivos)
       if (files && files.length > 0) {
         for (const file of files) {
           const fileExt = file.name.split('.').pop();
-          const fileName = `${Math.random()}.${fileExt}`;
+          const fileName = `${uid()}.${fileExt}`;
           const filePath = `${session.user.id}/${fileName}`;
 
           const { error: uploadError } = await supabase.storage
             .from('memories')
             .upload(filePath, file);
 
-          if (!uploadError) {
-            const { data: { publicUrl } } = supabase.storage
-              .from('memories')
-              .getPublicUrl(filePath);
-            uploadedUrls.push(publicUrl);
+          if (uploadError) {
+            console.error('Erro ao enviar foto da memória:', uploadError);
+            toast.error(`Não foi possível enviar "${file.name}": ${uploadError.message}`);
+            continue;
           }
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('memories')
+            .getPublicUrl(filePath);
+          uploadedUrls.push(publicUrl);
         }
       }
 
       // 2. Inserção no Banco de Dados
-      await supabase.from('memories').insert([{
+      const { data: inserted, error: insertError } = await supabase.from('memories').insert([{
         title: m.title,
         description: m.description,
         memory_date: m.date,
@@ -635,13 +640,20 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         location: m.location,
         image_urls: uploadedUrls,
         user_id: session.user.id // Este user_id do Supabase é diferente do 'user1'/'user2'
-      }]);
+      }]).select('id').single();
+
+      if (insertError) {
+        console.error('Erro ao salvar memória no Supabase:', insertError);
+        toast.error('Não foi possível salvar a memória no servidor.');
+      } else {
+        insertedId = inserted?.id ?? null;
+      }
     }
 
     // Atualização do estado local (UI)
     set((p) => ({
       ...p,
-      memories: [{ ...m, imageUrls: uploadedUrls, id: uid(), createdAt: new Date().toISOString(), userId: currentUser as 'user1' | 'user2' }, ...p.memories]
+      memories: [{ ...m, imageUrls: uploadedUrls, id: insertedId ?? uid(), createdAt: new Date().toISOString(), userId: currentUser as 'user1' | 'user2' }, ...p.memories]
     }));
   }, [set, currentUser, session?.user]);
 
@@ -863,7 +875,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         .from('memories') // Reutilizando o bucket 'memories' existente
         .upload(filePath, file);
 
-      if (!uploadError) {
+      if (uploadError) {
+        console.error('Erro ao enviar foto de perfil:', uploadError);
+        toast.error(`Não foi possível enviar a foto: ${uploadError.message}`);
+      } else {
         const { data: { publicUrl } } = supabase.storage
           .from('memories')
           .getPublicUrl(filePath);
@@ -887,7 +902,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     // Persistir os dados do perfil no Supabase (linha única compartilhada pelo casal)
     // para que não se percam ao deslogar / trocar de dispositivo
     if (session?.user) {
-      await supabase.from('profiles').upsert({
+      const { error: upsertError } = await supabase.from('profiles').upsert({
         id: COUPLE_PROFILE_ROW_ID,
         couple_profile: {
           ...data.coupleProfile,
@@ -895,6 +910,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         },
         updated_at: new Date().toISOString()
       });
+
+      if (upsertError) {
+        console.error('Erro ao salvar perfil no Supabase:', upsertError);
+        toast.error('Não foi possível salvar o perfil no servidor.');
+      }
     }
   }, [set, session?.user, data.coupleProfile]);
 

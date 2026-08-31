@@ -24,10 +24,17 @@ export default function AuthPage() {
     }
   }, [isAuthenticated, currentUser, navigate]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (authenticate(password)) {
+    setSubmitting(true);
+
+    const result = await authenticate(password);
+
+    setSubmitting(false);
+
+    if (result.success) {
       navigate('/');
     } else {
       setError(true);
@@ -132,9 +139,10 @@ export default function AuthPage() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               type="submit"
-              className="w-full bg-primary text-primary-foreground py-4 rounded-2xl shadow-lg hover:shadow-xl transition-all"
+              disabled={submitting}
+              className="w-full bg-primary text-primary-foreground py-4 rounded-2xl shadow-lg hover:shadow-xl transition-all disabled:opacity-60"
             >
-              Entrar
+              {submitting ? 'Entrando...' : 'Entrar'}
             </motion.button>
           </form>
 

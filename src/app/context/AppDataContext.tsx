@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { supabase } from '../../supabase';
-import { AuthChangeEvent, Session } from '@supabase/supabase-js';
-import { useAuth } from './AuthContext'; // Importar useAuth
+import { useAuth } from './AuthContext';
+
+// Linha única que guarda o perfil do casal compartilhado entre os dois logins.
+const COUPLE_PROFILE_ROW_ID = 'couple';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,11 +67,65 @@ export interface Memory {
   imageUrls?: string[];
 }
 
+export type MessageUserSlot = 'user1' | 'user2';
+
+export interface MessageAttachment {
+  id: string;
+  type: 'image' | 'audio' | 'file';
+  name: string;
+  url: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface MessageReplyPreview {
+  id: string;
+  text: string;
+  userId: MessageUserSlot;
+}
+
 export interface Message {
   id: string;
-  sender_id: string;
   text: string;
+  senderId: MessageUserSlot;
+  createdAt: string;
+  editedAt?: string;
+  deletedForEveryone: boolean;
+  deletedFor: MessageUserSlot[];
+  reactions: Record<string, MessageUserSlot[]>;
+  starredBy: MessageUserSlot[];
+  replyTo?: MessageReplyPreview;
+  attachments: MessageAttachment[];
+}
+
+interface MessageRow {
+  id: string;
+  text: string;
+  sender_slot: MessageUserSlot;
   created_at: string;
+  edited_at: string | null;
+  deleted_for_everyone: boolean;
+  deleted_for: MessageUserSlot[];
+  reactions: Record<string, MessageUserSlot[]>;
+  starred_by: MessageUserSlot[];
+  reply_to: MessageReplyPreview | null;
+  attachments: MessageAttachment[];
+}
+
+function rowToMessage(row: MessageRow): Message {
+  return {
+    id: row.id,
+    text: row.text,
+    senderId: row.sender_slot,
+    createdAt: row.created_at,
+    editedAt: row.edited_at ?? undefined,
+    deletedForEveryone: row.deleted_for_everyone,
+    deletedFor: row.deleted_for ?? [],
+    reactions: row.reactions ?? {},
+    starredBy: row.starred_by ?? [],
+    replyTo: row.reply_to ?? undefined,
+    attachments: row.attachments ?? [],
+  };
 }
 
 export interface TimeCapsule {
@@ -187,7 +243,6 @@ interface AppData {
   answeredQuestionIds: string[];
   messages: Message[];
   loading: boolean;
-  session: Session | null;
 }
 
 interface AppDataContextType extends AppData {
@@ -198,7 +253,7 @@ interface AppDataContextType extends AppData {
   getEventsForDate: (date: string) => CalendarEvent[];
   getUpcomingEvents: (n?: number) => CalendarEvent[];
   // Goals
-  addGoal: (g: Omit<Goal, 'id' | 'createdAt'>) => void;
+  addGoal: (g: Omit<Goal, 'id' | 'createdAt' | 'userId'>) => void;
   updateGoal: (id: string, updates: Partial<Goal>) => void;
   deleteGoal: (id: string) => void;
   // Memories
@@ -207,7 +262,12 @@ interface AppDataContextType extends AppData {
   toggleMemoryFavorite: (id: string) => void;
   deleteMemory: (id: string) => void;
   // Chat
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (input: { text: string; replyTo?: MessageReplyPreview; attachments?: File[] }) => Promise<void>;
+  editMessage: (id: string, text: string) => Promise<void>;
+  deleteMessageForMe: (id: string) => Promise<void>;
+  deleteMessageForEveryone: (id: string) => Promise<void>;
+  reactToMessage: (id: string, emoji: string) => Promise<void>;
+  toggleStarMessage: (id: string) => Promise<void>;
   // Capsules
   addCapsule: (c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => void;
   openCapsule: (id: string) => void;
@@ -272,7 +332,6 @@ function defaultData(): AppData {
     answeredQuestionIds: [],
     messages: [],
     loading: true,
-    session: null,
   };
 }
 
@@ -310,79 +369,102 @@ const AppDataContext = createContext<AppDataContextType | undefined>(undefined);
 
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<AppData>(loadData);
-  const { currentUser } = useAuth(); // Obter o usuário logado
+  const { currentUser, session } = useAuth();
 
-  // Sincronização Inicial com Supabase
+  // Carrega os dados do casal do Supabase sempre que a sessão muda (login/logout)
   useEffect(() => {
-    const initSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setData(prev => ({ ...prev, session }));
+    if (!session?.user) {
+      setData(prev => ({ ...prev, loading: false }));
+      return;
+    }
 
-      if (session?.user) {
-        setData(prev => ({ ...prev, loading: true }));
-        try {
-          // Tenta carregar o perfil do casal persistido no Supabase
-          const { data: profile, error: pError } = await supabase
-            .from('profiles')
-            .select('couple_profile')
-            .eq('user_id', session.user.id)
-            .single();
+    let cancelled = false;
+    setData(prev => ({ ...prev, loading: true }));
 
-          if (profile?.couple_profile && !pError) {
-            setData(prev => ({
-              ...prev,
-              coupleProfile: profile.couple_profile as CoupleProfile
-            }));
-          }
+    (async () => {
+      try {
+        // Perfil do casal é uma única linha compartilhada pelos dois logins
+        const { data: profile, error: pError } = await supabase
+          .from('profiles')
+          .select('couple_profile')
+          .eq('id', COUPLE_PROFILE_ROW_ID)
+          .maybeSingle();
 
-          // Exemplo de busca de dados reais ao iniciar
-          const { data: events } = await supabase
-            .from('events')
-            .select('*');
-            
-          if (events) {
-            setData(prev => ({ 
-              ...prev, 
-              events: events.map((e: any) => ({
-                ...e,
-                date: e.event_date, // mapeando do nome da coluna SQL para o seu tipo TS
-                time: e.event_time
-              })),
-            }));
-          }
-        } catch (error) {
-          console.error('Erro ao carregar dados do Supabase:', error);
-        } finally {
-          setData(prev => ({ ...prev, loading: false }));
+        if (!cancelled && profile?.couple_profile && !pError) {
+          setData(prev => ({
+            ...prev,
+            coupleProfile: profile.couple_profile as CoupleProfile
+          }));
         }
-      } else {
-        setData(prev => ({ ...prev, loading: false }));
+
+        const { data: events } = await supabase
+          .from('events')
+          .select('*');
+
+        if (!cancelled && events) {
+          setData(prev => ({
+            ...prev,
+            events: events.map((e: any) => ({
+              ...e,
+              date: e.event_date, // mapeando do nome da coluna SQL para o seu tipo TS
+              time: e.event_time
+            })),
+          }));
+        }
+
+        const { data: messageRows } = await supabase
+          .from('messages')
+          .select('*')
+          .order('created_at', { ascending: true });
+
+        if (!cancelled && messageRows) {
+          setData(prev => ({
+            ...prev,
+            messages: (messageRows as MessageRow[]).map(rowToMessage),
+          }));
+        }
+      } catch (error) {
+        console.error('Erro ao carregar dados do Supabase:', error);
+      } finally {
+        if (!cancelled) setData(prev => ({ ...prev, loading: false }));
       }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  // Inscrição Realtime para Chat (independente da sessão; RLS controla o acesso)
+  useEffect(() => {
+    const upsertMessage = (row: MessageRow) => {
+      const incoming = rowToMessage(row);
+      setData(prev => {
+        const exists = prev.messages.some(m => m.id === incoming.id);
+        return {
+          ...prev,
+          messages: exists
+            ? prev.messages.map(m => m.id === incoming.id ? incoming : m)
+            : [...prev.messages, incoming],
+        };
+      });
     };
 
-    initSession();
-
-    // Inscrição Realtime para Chat
     const channel = supabase
       .channel('schema-db-changes')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          setData(prev => ({
-            ...prev,
-            messages: [...prev.messages, payload.new as Message]
-          }));
-        }
+        (payload) => upsertMessage(payload.new as MessageRow)
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages' },
+        (payload) => upsertMessage(payload.new as MessageRow)
       )
       .subscribe();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
-      setData(prev => ({ ...prev, session }));
-    });
-
     return () => {
-      subscription.unsubscribe();
       supabase.removeChannel(channel);
     };
   }, []);
@@ -402,7 +484,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     set((p) => ({ ...p, events: [...p.events, { ...e, id: newId }] }));
 
     // Persiste no Supabase se houver sessão
-    if (data.session?.user) {
+    if (session?.user) {
       await supabase.from('events').insert([{
         title: e.title,
         description: e.description,
@@ -413,23 +495,23 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         color: e.color
       }]);
     }
-  }, [set]);
+  }, [set, session?.user]);
 
   const updateEvent = useCallback(async (id: string, updates: Partial<CalendarEvent>) => {
     set((p) => ({ ...p, events: p.events.map((e) => e.id === id ? { ...e, ...updates } : e) }));
-    
-    if (data.session?.user) {
+
+    if (session?.user) {
       await supabase.from('events').update(updates).eq('id', id);
     }
-  }, [set]);
+  }, [set, session?.user]);
 
   const deleteEvent = useCallback(async (id: string) => {
     set((p) => ({ ...p, events: p.events.filter((e) => e.id !== id) }));
 
-    if (data.session?.user) {
+    if (session?.user) {
       await supabase.from('events').delete().eq('id', id);
     }
-  }, [set]);
+  }, [set, session?.user]);
 
   const getEventsForDate = useCallback((date: string) => {
     return data.events.filter((e) => e.date === date);
@@ -450,7 +532,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     if (!currentUser) return; // Não permite adicionar sem usuário logado
     set((p) => ({ ...p, goals: [...p.goals, { ...g, id: newId, createdAt, userId: currentUser as 'user1' | 'user2' }] }));
 
-    if (data.session?.user) {
+    if (session?.user) {
       await supabase.from('goals').insert([{
         name: g.name,
         description: g.description,
@@ -458,38 +540,38 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         target_value: g.targetValue,
         current_value: g.currentValue,
         deadline: g.deadline,
-        status: g.status
-        // TODO: Adicionar couple_id e user_id no Supabase para metas
+        status: g.status,
+        user_id: currentUser,
       }]);
     }
-  }, [set, currentUser, data.session?.user]);
+  }, [set, currentUser, session?.user]);
 
   const updateGoal = useCallback(async (id: string, updates: Partial<Goal>) => {
     set((p) => ({ ...p, goals: p.goals.map((g) => g.id === id ? { ...g, ...updates } : g) }));
-    if (data.session?.user) {
+    if (session?.user) {
       await supabase.from('goals').update(updates).eq('id', id);
     }
-  }, [set]);
+  }, [set, session?.user]);
 
   const deleteGoal = useCallback(async (id: string) => {
     set((p) => ({ ...p, goals: p.goals.filter((g) => g.id !== id) }));
-    if (data.session?.user) {
+    if (session?.user) {
       await supabase.from('goals').delete().eq('id', id);
     }
-  }, [set]);
+  }, [set, session?.user]);
 
   // ── Memories ─────────────────────────────────────────────────────────────────
   const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt' | 'userId'>, files?: File[]) => {
     if (!currentUser) return; // Não permite adicionar sem usuário logado
     let uploadedUrls: string[] = m.imageUrls || [];
 
-    if (data.session?.user) {
+    if (session?.user) {
       // 1. Upload das imagens para o Storage (se houver arquivos)
       if (files && files.length > 0) {
         for (const file of files) {
           const fileExt = file.name.split('.').pop();
           const fileName = `${Math.random()}.${fileExt}`;
-          const filePath = `${data.session.user.id}/${fileName}`;
+          const filePath = `${session.user.id}/${fileName}`;
 
           const { error: uploadError } = await supabase.storage
             .from('memories')
@@ -512,7 +594,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         emotion: m.emotion,
         location: m.location,
         image_urls: uploadedUrls,
-        user_id: data.session.user.id // Este user_id do Supabase é diferente do 'user1'/'user2'
+        user_id: session.user.id // Este user_id do Supabase é diferente do 'user1'/'user2'
       }]);
     }
 
@@ -521,13 +603,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       ...p,
       memories: [{ ...m, imageUrls: uploadedUrls, id: uid(), createdAt: new Date().toISOString(), userId: currentUser as 'user1' | 'user2' }, ...p.memories]
     }));
-  }, [set, currentUser, data.session?.user]);
+  }, [set, currentUser, session?.user]);
 
   const toggleMemoryLike = useCallback((id: string) => {
     set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, liked: !m.liked } : m) }));
-    if (data.session?.user) {
-      // Lógica de update no supabase aqui...
-    }
   }, [set]);
 
   const toggleMemoryFavorite = useCallback((id: string) => {
@@ -536,25 +615,126 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   const deleteMemory = useCallback(async (id: string) => {
     set((p) => ({ ...p, memories: p.memories.filter((m) => m.id !== id) }));
-    if (data.session?.user) {
+    if (session?.user) {
       await supabase.from('memories').delete().eq('id', id);
     }
-  }, [set, data.session?.user]);
+  }, [set, session?.user]);
 
   // ── Chat ─────────────────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async (text: string) => {
-    if (!data.session?.user || !text.trim()) return;
-    
+  const uploadChatAttachment = useCallback(async (file: File): Promise<MessageAttachment | null> => {
+    if (!session?.user) return null;
+
+    const fileExt = file.name.split('.').pop();
+    const filePath = `chat/${session.user.id}/${uid()}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage.from('memories').upload(filePath, file);
+    if (uploadError) {
+      console.error('Erro ao enviar anexo:', uploadError);
+      return null;
+    }
+
+    const { data: { publicUrl } } = supabase.storage.from('memories').getPublicUrl(filePath);
+    const type: MessageAttachment['type'] = file.type.startsWith('image/')
+      ? 'image'
+      : file.type.startsWith('audio/')
+        ? 'audio'
+        : 'file';
+
+    return {
+      id: uid(),
+      type,
+      name: file.name,
+      url: publicUrl,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+    };
+  }, [session?.user]);
+
+  const sendMessage = useCallback(async (input: { text: string; replyTo?: MessageReplyPreview; attachments?: File[] }) => {
+    if (!session?.user || !currentUser) return;
+    const text = input.text.trim();
+    if (!text && (!input.attachments || input.attachments.length === 0)) return;
+
+    const uploaded = input.attachments && input.attachments.length > 0
+      ? (await Promise.all(input.attachments.map(uploadChatAttachment))).filter((a): a is MessageAttachment => a !== null)
+      : [];
+
     const { error } = await supabase.from('messages').insert([{
       text,
-      sender_id: data.session.user.id,
-      // Aqui assumimos que o RLS cuidará do couple_id ou que você buscará o id do casal no perfil
+      sender_id: session.user.id,
+      sender_slot: currentUser,
+      reply_to: input.replyTo ?? null,
+      attachments: uploaded,
     }]);
 
     if (error) {
       console.error('Erro ao enviar mensagem:', error);
     }
-  }, [data.session]);
+  }, [session, currentUser, uploadChatAttachment]);
+
+  const editMessage = useCallback(async (id: string, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const { error } = await supabase.from('messages')
+      .update({ text: trimmed, edited_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) console.error('Erro ao editar mensagem:', error);
+  }, []);
+
+  const deleteMessageForMe = useCallback(async (id: string) => {
+    if (!currentUser) return;
+    const message = data.messages.find((m) => m.id === id);
+    if (!message) return;
+
+    const nextDeletedFor = message.deletedFor.includes(currentUser)
+      ? message.deletedFor
+      : [...message.deletedFor, currentUser];
+
+    const { error } = await supabase.from('messages').update({ deleted_for: nextDeletedFor }).eq('id', id);
+    if (error) console.error('Erro ao apagar mensagem:', error);
+  }, [currentUser, data.messages]);
+
+  const deleteMessageForEveryone = useCallback(async (id: string) => {
+    const { error } = await supabase.from('messages').update({
+      text: '',
+      attachments: [],
+      deleted_for_everyone: true,
+    }).eq('id', id);
+
+    if (error) console.error('Erro ao apagar mensagem:', error);
+  }, []);
+
+  const reactToMessage = useCallback(async (id: string, emoji: string) => {
+    if (!currentUser) return;
+    const message = data.messages.find((m) => m.id === id);
+    if (!message) return;
+
+    // Cada pessoa só pode ter uma reação ativa por mensagem
+    const nextReactions: Record<string, MessageUserSlot[]> = {};
+    for (const [key, users] of Object.entries(message.reactions)) {
+      const filtered = users.filter((u) => u !== currentUser);
+      if (filtered.length > 0) nextReactions[key] = filtered;
+    }
+    nextReactions[emoji] = [...(nextReactions[emoji] ?? []), currentUser];
+
+    const { error } = await supabase.from('messages').update({ reactions: nextReactions }).eq('id', id);
+    if (error) console.error('Erro ao reagir à mensagem:', error);
+  }, [currentUser, data.messages]);
+
+  const toggleStarMessage = useCallback(async (id: string) => {
+    if (!currentUser) return;
+    const message = data.messages.find((m) => m.id === id);
+    if (!message) return;
+
+    const nextStarredBy = message.starredBy.includes(currentUser)
+      ? message.starredBy.filter((u) => u !== currentUser)
+      : [...message.starredBy, currentUser];
+
+    const { error } = await supabase.from('messages').update({ starred_by: nextStarredBy }).eq('id', id);
+    if (error) console.error('Erro ao favoritar mensagem:', error);
+  }, [currentUser, data.messages]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────
   const addCapsule = useCallback((c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => {
@@ -634,10 +814,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const updatePersonProfile = useCallback(async (personId: 'user1' | 'user2', updates: Partial<PersonProfile>, file?: File) => {
     let avatarUrl = updates.avatarUrl;
 
-    if (file && data.session?.user) {
+    if (file && session?.user) {
       const fileExt = file.name.split('.').pop();
       const fileName = `avatar-${personId}-${Date.now()}.${fileExt}`;
-      const filePath = `avatars/${data.session.user.id}/${fileName}`;
+      const filePath = `avatars/${session.user.id}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('memories') // Reutilizando o bucket 'memories' existente
@@ -664,10 +844,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       },
     }));
 
-    // Persistir os dados do perfil no Supabase para que não se percam ao deslogar
-    if (data.session?.user) {
+    // Persistir os dados do perfil no Supabase (linha única compartilhada pelo casal)
+    // para que não se percam ao deslogar / trocar de dispositivo
+    if (session?.user) {
       await supabase.from('profiles').upsert({
-        user_id: data.session.user.id,
+        id: COUPLE_PROFILE_ROW_ID,
         couple_profile: {
           ...data.coupleProfile,
           [personId]: { ...data.coupleProfile[personId], ...profileUpdates }
@@ -675,7 +856,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         updated_at: new Date().toISOString()
       });
     }
-  }, [set, data.session?.user, data.coupleProfile]);
+  }, [set, session?.user, data.coupleProfile]);
 
   return (
     <AppDataContext.Provider value={{
@@ -683,7 +864,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       addEvent, updateEvent, deleteEvent, getEventsForDate, getUpcomingEvents,
       addGoal, updateGoal, deleteGoal,
       addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory,
-      sendMessage,
+      sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage,
       addCapsule, openCapsule,
       addWish, deleteWish,
       answerQuestion, getDailyQuestion, getRandomQuestion,

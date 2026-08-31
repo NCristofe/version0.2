@@ -162,11 +162,11 @@ export default function CoupleProfilePage() {
     event.target.value = '';
   };
 
-  const handlePasswordChange = (event: React.FormEvent) => {
+  const handlePasswordChange = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (passwordForm.next.length < 4) {
-      setPasswordMessage({ type: 'error', text: 'A nova senha precisa ter pelo menos 4 caracteres.' });
+    if (passwordForm.next.length < 6) {
+      setPasswordMessage({ type: 'error', text: 'A nova senha precisa ter pelo menos 6 caracteres.' });
       return;
     }
 
@@ -175,8 +175,9 @@ export default function CoupleProfilePage() {
       return;
     }
 
-    if (!changePassword(passwordForm.current, passwordForm.next)) {
-      setPasswordMessage({ type: 'error', text: 'Senha atual incorreta.' });
+    const result = await changePassword(passwordForm.current, passwordForm.next);
+    if (!result.success) {
+      setPasswordMessage({ type: 'error', text: result.error ?? 'Senha atual incorreta.' });
       return;
     }
 

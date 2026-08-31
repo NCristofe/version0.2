@@ -154,7 +154,7 @@ export default function CoupleProfilePage() {
     setTimeout(() => setPasswordMessage(null), 2500);
   };
 
-  const dailyCompletedCount = dailyState.completed.length;
+  const dailyCompletedCount = dailyChallenges.completed.length;
   const dailyTotalCount = DAILY_CHALLENGES_POOL.length;
 
   return (

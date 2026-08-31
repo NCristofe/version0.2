@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useAppData } from '../context/AppDataContext';
+import { useAppData, Message, MessageAttachment, MessageReplyPreview } from '../context/AppDataContext';
 import { useGamification } from '../context/GamificationContext';
 import {
   Check,
@@ -24,37 +24,14 @@ import { UserAvatar } from '../components/UserAvatar';
 
 type UserId = 'user1' | 'user2';
 
-interface ChatAttachment {
+interface PendingAttachment {
   id: string;
-  type: 'image' | 'audio' | 'file';
-  name: string;
-  url: string;
-  mimeType: string;
-  size: number;
+  file: File;
+  type: MessageAttachment['type'];
+  previewUrl: string;
 }
 
-interface ReplyPreview {
-  id: string;
-  text: string;
-  userId: UserId;
-}
-
-interface ChatMessage {
-  id: string;
-  text: string;
-  userId: UserId;
-  timestamp: string;
-  editedAt?: string;
-  deletedForEveryone?: boolean;
-  deletedFor?: UserId[];
-  reactions?: Record<string, UserId[]>;
-  starredBy?: UserId[];
-  replyTo?: ReplyPreview;
-  attachments?: ChatAttachment[];
-}
-
-const STORAGE_KEY = 'messages';
-const reactions = ['❤️', '😂', '😍', '🥺', '🔥', '👏'];
+const reactionEmojis = ['❤️', '😂', '😍', '🥺', '🔥', '👏'];
 const quickMessages = [
   'Te amo ❤️',
   'Você é tudo pra mim',
@@ -64,61 +41,10 @@ const quickMessages = [
   'Cheguei bem',
 ];
 
-const initialMessages: ChatMessage[] = [
-  {
-    id: '1',
-    text: 'Oi meu amor!',
-    userId: 'user1',
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
-    reactions: { '❤️': ['user2'] },
-  },
-  {
-    id: '2',
-    text: 'Oi minha vida! Como você está?',
-    userId: 'user2',
-    timestamp: new Date(Date.now() - 3500000).toISOString(),
-  },
-  {
-    id: '3',
-    text: 'Estou bem! Estava pensando em você',
-    userId: 'user1',
-    timestamp: new Date(Date.now() - 3400000).toISOString(),
-  },
-];
-
-function normalizeMessages(raw: unknown): ChatMessage[] {
-  if (!Array.isArray(raw)) return initialMessages;
-
-  return raw.map((message: any) => ({
-    id: String(message.id ?? Date.now()),
-    text: String(message.text ?? ''),
-    userId: message.userId === 'user2' ? 'user2' : 'user1',
-    timestamp: new Date(message.timestamp ?? Date.now()).toISOString(),
-    editedAt: message.editedAt,
-    deletedForEveryone: Boolean(message.deletedForEveryone),
-    deletedFor: Array.isArray(message.deletedFor) ? message.deletedFor : [],
-    reactions: message.reactions ?? {},
-    starredBy: Array.isArray(message.starredBy) ? message.starredBy : [],
-    replyTo: message.replyTo,
-    attachments: Array.isArray(message.attachments) ? message.attachments : [],
-  }));
-}
-
-function loadMessages() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return normalizeMessages(JSON.parse(saved));
-  } catch {}
-  return initialMessages;
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error('file-read-error'));
-    reader.readAsDataURL(file);
-  });
+function classifyFile(file: File): MessageAttachment['type'] {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('audio/')) return 'audio';
+  return 'file';
 }
 
 function formatBytes(bytes: number) {
@@ -129,20 +55,19 @@ function formatBytes(bytes: number) {
 
 export default function MessagesPage() {
   const { currentUser } = useAuth();
-  const { coupleProfile } = useAppData();
+  const { coupleProfile, messages, sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage } = useAppData();
   const { incrementStat, unlockAchievement } = useGamification();
   const currentUserId: UserId = currentUser === 'user2' ? 'user2' : 'user1';
   const otherUserId: UserId = currentUserId === 'user1' ? 'user2' : 'user1';
 
-  const [messages, setMessages] = useState<ChatMessage[]>(loadMessages);
   const [input, setInput] = useState('');
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showQuickMessages, setShowQuickMessages] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  const [replyTo, setReplyTo] = useState<ReplyPreview | null>(null);
+  const [replyTo, setReplyTo] = useState<MessageReplyPreview | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isRecording, setIsRecording] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -150,6 +75,7 @@ export default function MessagesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
 
   const otherProfile = coupleProfile[otherUserId];
   const currentProfile = coupleProfile[currentUserId];
@@ -157,78 +83,73 @@ export default function MessagesPage() {
   const visibleMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
     return messages.filter((message) => {
-      if (message.deletedFor?.includes(currentUserId)) return false;
+      if (message.deletedFor.includes(currentUserId)) return false;
       if (!q) return true;
       const text = message.deletedForEveryone ? '' : message.text.toLowerCase();
-      const files = message.attachments?.some((attachment) => attachment.name.toLowerCase().includes(q));
+      const files = message.attachments.some((attachment) => attachment.name.toLowerCase().includes(q));
       return text.includes(q) || files;
     });
   }, [messages, search, currentUserId]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-  }, [messages]);
-
-  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [visibleMessages.length]);
 
-  const updateMessage = (id: string, updater: (message: ChatMessage) => ChatMessage) => {
-    setMessages((current) => current.map((message) => (message.id === id ? updater(message) : message)));
-  };
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
 
-  const sendMessage = (text: string) => {
+  // Libera os object URLs de preview quando o componente desmonta
+  useEffect(() => () => {
+    pendingAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
+  }, []);
+
+  const sendCurrentMessage = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed && attachments.length === 0) return;
+    if (!trimmed && pendingAttachments.length === 0) return;
 
     if (editingMessageId) {
-      updateMessage(editingMessageId, (message) => ({
-        ...message,
-        text: trimmed,
-        editedAt: new Date().toISOString(),
-      }));
+      const id = editingMessageId;
       setEditingMessageId(null);
       setInput('');
+      await editMessage(id, trimmed);
       return;
     }
 
-    const message: ChatMessage = {
-      id: crypto.randomUUID(),
-      text: trimmed,
-      userId: currentUserId,
-      timestamp: new Date().toISOString(),
-      reactions: {},
-      starredBy: [],
-      replyTo: replyTo ?? undefined,
-      attachments,
-    };
+    const filesToSend = pendingAttachments.map((attachment) => attachment.file);
+    pendingAttachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
 
-    setMessages((current) => [...current, message]);
     setInput('');
     setReplyTo(null);
-    setAttachments([]);
+    setPendingAttachments([]);
     setShowQuickMessages(false);
+
+    await sendMessage({ text: trimmed, replyTo: replyTo ?? undefined, attachments: filesToSend });
     incrementStat('messagesSent');
     unlockAchievement('first_message');
   };
 
-  const attachFiles = async (event: React.ChangeEvent<HTMLInputElement>, kind: 'image' | 'file') => {
+  const attachFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
 
-    const picked = files.slice(0, Math.max(0, 8 - attachments.length));
-    const nextAttachments = await Promise.all(
-      picked.map(async (file) => ({
-        id: crypto.randomUUID(),
-        type: kind === 'image' && file.type.startsWith('image/') ? 'image' : 'file',
-        name: file.name,
-        url: await fileToDataUrl(file),
-        mimeType: file.type || 'application/octet-stream',
-        size: file.size,
-      } satisfies ChatAttachment)),
-    );
+    const picked = files.slice(0, Math.max(0, 8 - pendingAttachments.length));
+    const next: PendingAttachment[] = picked.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      type: classifyFile(file),
+      previewUrl: URL.createObjectURL(file),
+    }));
 
-    setAttachments((current) => [...current, ...nextAttachments]);
+    setPendingAttachments((current) => [...current, ...next]);
+  };
+
+  const removeAttachment = (id: string) => {
+    setPendingAttachments((current) => {
+      const found = current.find((attachment) => attachment.id === id);
+      if (found) URL.revokeObjectURL(found.previewUrl);
+      return current.filter((attachment) => attachment.id !== id);
+    });
   };
 
   const startRecording = async () => {
@@ -245,20 +166,17 @@ export default function MessagesPage() {
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) audioChunksRef.current.push(event.data);
     };
-    recorder.onstop = async () => {
+    recorder.onstop = () => {
       stream.getTracks().forEach((track) => track.stop());
       const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
       const file = new File([blob], `audio-${Date.now()}.webm`, { type: blob.type });
-      const url = await fileToDataUrl(file);
-      setAttachments((current) => [
+      setPendingAttachments((current) => [
         ...current,
         {
           id: crypto.randomUUID(),
+          file,
           type: 'audio',
-          name: 'Mensagem de voz',
-          url,
-          mimeType: blob.type,
-          size: blob.size,
+          previewUrl: URL.createObjectURL(file),
         },
       ]);
       setIsRecording(false);
@@ -272,69 +190,24 @@ export default function MessagesPage() {
     mediaRecorderRef.current?.stop();
   };
 
-  const reactToMessage = (messageId: string, emoji: string) => {
-    updateMessage(messageId, (message) => {
-      const nextReactions = { ...(message.reactions ?? {}) };
-      Object.keys(nextReactions).forEach((key) => {
-        nextReactions[key] = nextReactions[key].filter((id) => id !== currentUserId);
-        if (nextReactions[key].length === 0) delete nextReactions[key];
-      });
-
-      nextReactions[emoji] = [...(nextReactions[emoji] ?? []), currentUserId];
-      return { ...message, reactions: nextReactions };
-    });
-    setActiveMessageId(null);
-  };
-
-  const toggleStar = (messageId: string) => {
-    updateMessage(messageId, (message) => {
-      const starredBy = message.starredBy ?? [];
-      return {
-        ...message,
-        starredBy: starredBy.includes(currentUserId)
-          ? starredBy.filter((id) => id !== currentUserId)
-          : [...starredBy, currentUserId],
-      };
-    });
-  };
-
-  const deleteForMe = (messageId: string) => {
-    updateMessage(messageId, (message) => ({
-      ...message,
-      deletedFor: [...new Set([...(message.deletedFor ?? []), currentUserId])],
-    }));
-    setActiveMessageId(null);
-  };
-
-  const deleteForEveryone = (messageId: string) => {
-    updateMessage(messageId, (message) => ({
-      ...message,
-      text: '',
-      attachments: [],
-      deletedForEveryone: true,
-    }));
-    setActiveMessageId(null);
-  };
-
-  const beginEdit = (message: ChatMessage) => {
+  const beginEdit = (message: Message) => {
     setEditingMessageId(message.id);
     setInput(message.text);
     setReplyTo(null);
-    setAttachments([]);
     setActiveMessageId(null);
   };
 
-  const beginReply = (message: ChatMessage) => {
+  const beginReply = (message: Message) => {
     setReplyTo({
       id: message.id,
-      text: message.deletedForEveryone ? 'Mensagem apagada' : message.text || message.attachments?.[0]?.name || 'Anexo',
-      userId: message.userId,
+      text: message.deletedForEveryone ? 'Mensagem apagada' : message.text || message.attachments[0]?.name || 'Anexo',
+      userId: message.senderId,
     });
     setActiveMessageId(null);
   };
 
-  const formatTime = (timestamp: string) => {
-    return new Date(timestamp).toLocaleTimeString('pt-BR', {
+  const formatTime = (createdAt: string) => {
+    return new Date(createdAt).toLocaleTimeString('pt-BR', {
       hour: '2-digit',
       minute: '2-digit',
     });
@@ -381,9 +254,9 @@ export default function MessagesPage() {
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gradient-to-b from-primary/5 to-background">
         <AnimatePresence initial={false}>
           {visibleMessages.map((message) => {
-            const isCurrentUser = message.userId === currentUserId;
+            const isCurrentUser = message.senderId === currentUserId;
             const isActive = activeMessageId === message.id;
-            const isStarred = message.starredBy?.includes(currentUserId);
+            const isStarred = message.starredBy.includes(currentUserId);
 
             return (
               <motion.div
@@ -394,7 +267,7 @@ export default function MessagesPage() {
                 className={`flex items-end gap-2 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
               >
                 {!isCurrentUser && (
-                  <UserAvatar userId={message.userId} className="w-8 h-8 shrink-0" fallbackClassName="text-base bg-primary/10" />
+                  <UserAvatar userId={message.senderId} className="w-8 h-8 shrink-0" fallbackClassName="text-base bg-primary/10" />
                 )}
 
                 <div className={`max-w-[78%] ${isCurrentUser ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
@@ -422,7 +295,7 @@ export default function MessagesPage() {
                       <p className="italic opacity-70">Mensagem apagada</p>
                     ) : (
                       <>
-                        {message.attachments && message.attachments.length > 0 && (
+                        {message.attachments.length > 0 && (
                           <div className="space-y-2 mb-2">
                             {message.attachments.map((attachment) => (
                               <AttachmentView key={attachment.id} attachment={attachment} />
@@ -438,12 +311,12 @@ export default function MessagesPage() {
                     }`}>
                       {isStarred && <Star className="w-3 h-3" fill="currentColor" />}
                       {message.editedAt && <span>editada</span>}
-                      <span>{formatTime(message.timestamp)}</span>
+                      <span>{formatTime(message.createdAt)}</span>
                       {isCurrentUser && (message.deletedForEveryone ? <Check size={13} /> : <CheckCheck size={13} />)}
                     </div>
                   </button>
 
-                  {message.reactions && Object.keys(message.reactions).length > 0 && (
+                  {Object.keys(message.reactions).length > 0 && (
                     <div className={`flex gap-1 ${isCurrentUser ? 'justify-end' : 'justify-start'}`}>
                       {Object.entries(message.reactions).map(([emoji, users]) => (
                         <span key={emoji} className="px-2 py-0.5 rounded-full bg-card border border-border text-xs shadow-sm">
@@ -459,17 +332,20 @@ export default function MessagesPage() {
                         isMine={isCurrentUser}
                         onReply={() => beginReply(message)}
                         onEdit={() => beginEdit(message)}
-                        onDeleteForMe={() => deleteForMe(message.id)}
-                        onDeleteForEveryone={() => deleteForEveryone(message.id)}
-                        onStar={() => toggleStar(message.id)}
-                        onReact={(emoji) => reactToMessage(message.id, emoji)}
+                        onDeleteForMe={() => deleteMessageForMe(message.id)}
+                        onDeleteForEveryone={() => deleteMessageForEveryone(message.id)}
+                        onStar={() => toggleStarMessage(message.id)}
+                        onReact={(emoji) => {
+                          reactToMessage(message.id, emoji);
+                          setActiveMessageId(null);
+                        }}
                       />
                     )}
                   </AnimatePresence>
                 </div>
 
                 {isCurrentUser && (
-                  <UserAvatar userId={message.userId} className="w-8 h-8 shrink-0" fallbackClassName="text-base bg-primary/10" />
+                  <UserAvatar userId={message.senderId} className="w-8 h-8 shrink-0" fallbackClassName="text-base bg-primary/10" />
                 )}
               </motion.div>
             );
@@ -498,7 +374,7 @@ export default function MessagesPage() {
                 {quickMessages.map((message) => (
                   <button
                     key={message}
-                    onClick={() => sendMessage(message)}
+                    onClick={() => sendCurrentMessage(message)}
                     className="px-4 py-2 rounded-full bg-primary/10 text-primary whitespace-nowrap text-sm"
                   >
                     {message}
@@ -508,7 +384,7 @@ export default function MessagesPage() {
             </motion.div>
           )}
 
-          {(replyTo || editingMessageId || attachments.length > 0 || isRecording) && (
+          {(replyTo || editingMessageId || pendingAttachments.length > 0 || isRecording) && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
@@ -542,20 +418,20 @@ export default function MessagesPage() {
                   onClose={stopRecording}
                 />
               )}
-              {attachments.length > 0 && (
+              {pendingAttachments.length > 0 && (
                 <div className="flex gap-2 overflow-x-auto pb-2">
-                  {attachments.map((attachment) => (
+                  {pendingAttachments.map((attachment) => (
                     <div key={attachment.id} className="relative w-20 h-20 shrink-0 rounded-xl overflow-hidden bg-muted border border-border">
                       {attachment.type === 'image' ? (
-                        <img src={attachment.url} alt={attachment.name} className="w-full h-full object-cover" />
+                        <img src={attachment.previewUrl} alt={attachment.file.name} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground px-2">
                           {attachment.type === 'audio' ? <Mic className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
-                          <span className="text-[10px] truncate max-w-full">{attachment.name}</span>
+                          <span className="text-[10px] truncate max-w-full">{attachment.file.name}</span>
                         </div>
                       )}
                       <button
-                        onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                        onClick={() => removeAttachment(attachment.id)}
                         className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white flex items-center justify-center"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -598,7 +474,7 @@ export default function MessagesPage() {
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                sendMessage(input);
+                sendCurrentMessage(input);
               }
             }}
             placeholder="Mensagem"
@@ -606,10 +482,10 @@ export default function MessagesPage() {
             className="flex-1 max-h-28 min-h-11 px-4 py-3 bg-muted rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
 
-          {input.trim() || attachments.length > 0 || editingMessageId ? (
+          {input.trim() || pendingAttachments.length > 0 || editingMessageId ? (
             <motion.button
               whileTap={{ scale: 0.94 }}
-              onClick={() => sendMessage(input)}
+              onClick={() => sendCurrentMessage(input)}
               className="w-11 h-11 bg-primary text-primary-foreground rounded-full flex items-center justify-center shrink-0 shadow-lg"
             >
               <Send size={20} />
@@ -632,14 +508,14 @@ export default function MessagesPage() {
             accept="image/*"
             multiple
             className="sr-only"
-            onChange={(event) => attachFiles(event, 'image')}
+            onChange={attachFiles}
           />
           <input
             ref={fileInputRef}
             type="file"
             multiple
             className="sr-only"
-            onChange={(event) => attachFiles(event, 'file')}
+            onChange={attachFiles}
           />
         </div>
       </div>
@@ -647,7 +523,7 @@ export default function MessagesPage() {
   );
 }
 
-function AttachmentView({ attachment }: { attachment: ChatAttachment }) {
+function AttachmentView({ attachment }: { attachment: MessageAttachment }) {
   if (attachment.type === 'image') {
     return (
       <a href={attachment.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl bg-black/10">
@@ -700,7 +576,7 @@ function MessageActions({
       className="rounded-2xl bg-card border border-border shadow-lg p-2"
     >
       <div className="flex gap-1 mb-2">
-        {reactions.map((emoji) => (
+        {reactionEmojis.map((emoji) => (
           <button key={emoji} onClick={() => onReact(emoji)} className="w-8 h-8 rounded-full hover:bg-muted text-lg">
             {emoji}
           </button>
@@ -717,7 +593,7 @@ function MessageActions({
   );
 }
 
-function ActionButton({ icon, label, onClick }: { icon: React.ReactElement; label: string; onClick: () => void }) {
+function ActionButton({ icon, label, onClick }: { icon: React.ReactElement<{ className?: string }>; label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}

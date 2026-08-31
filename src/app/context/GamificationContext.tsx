@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 
 export interface Achievement {
   id: string;
@@ -37,6 +37,11 @@ export interface GamificationState {
   };
 }
 
+export interface DailyChallengeState {
+  date: string;
+  completed: string[];
+}
+
 interface GamificationContextType {
   xp: number;
   currentLevel: Level;
@@ -47,10 +52,17 @@ interface GamificationContextType {
   xpHistory: XPEvent[];
   stats: GamificationState['stats'];
   lastXPGain: { amount: number; reason: string } | null;
+  dailyChallenges: DailyChallengeState;
   addXP: (amount: number, reason: string) => void;
   unlockAchievement: (id: string) => void;
   incrementStat: (stat: keyof GamificationState['stats']) => void;
   clearLastXPGain: () => void;
+  /**
+   * Marca um desafio diário como concluído E dá o XP, mas só na primeira vez
+   * no dia que uma ação REAL correspondente acontecer (enviar mensagem,
+   * adicionar foto, etc.) - não existe mais um botão "marquei que fiz".
+   */
+  completeDailyChallenge: (id: string, xpAmount: number, reason: string) => void;
 }
 
 export const LEVELS: Level[] = [
@@ -179,6 +191,22 @@ function getLevelForXP(xp: number): Level {
 }
 
 const STORAGE_KEY = 'gamification_v2';
+const DAILY_CHALLENGES_KEY = 'daily_challenges_v1';
+
+function getTodayKey() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function loadDailyChallenges(): DailyChallengeState {
+  try {
+    const raw = localStorage.getItem(DAILY_CHALLENGES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as DailyChallengeState;
+      if (parsed.date === getTodayKey()) return parsed;
+    }
+  } catch {}
+  return { date: getTodayKey(), completed: [] };
+}
 
 function loadState(): GamificationState {
   try {
@@ -201,10 +229,17 @@ const GamificationContext = createContext<GamificationContextType | undefined>(u
 export function GamificationProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<GamificationState>(loadState);
   const [lastXPGain, setLastXPGain] = useState<{ amount: number; reason: string } | null>(null);
+  const [dailyChallenges, setDailyChallenges] = useState<DailyChallengeState>(loadDailyChallenges);
+  const dailyChallengesRef = useRef(dailyChallenges);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
+
+  useEffect(() => {
+    dailyChallengesRef.current = dailyChallenges;
+    localStorage.setItem(DAILY_CHALLENGES_KEY, JSON.stringify(dailyChallenges));
+  }, [dailyChallenges]);
 
   const currentLevel = getLevelForXP(state.xp);
   const nextLevel = LEVELS.find((l) => l.level === currentLevel.level + 1) ?? null;
@@ -249,6 +284,15 @@ export function GamificationProvider({ children }: { children: React.ReactNode }
 
   const clearLastXPGain = useCallback(() => setLastXPGain(null), []);
 
+  const completeDailyChallenge = useCallback((id: string, xpAmount: number, reason: string) => {
+    const today = getTodayKey();
+    const current = dailyChallengesRef.current.date === today ? dailyChallengesRef.current : { date: today, completed: [] };
+    if (current.completed.includes(id)) return; // já ganhou esse bônus hoje
+
+    setDailyChallenges({ date: today, completed: [...current.completed, id] });
+    addXP(xpAmount, reason);
+  }, [addXP]);
+
   return (
     <GamificationContext.Provider
       value={{
@@ -261,10 +305,12 @@ export function GamificationProvider({ children }: { children: React.ReactNode }
         xpHistory: state.xpHistory,
         stats: state.stats,
         lastXPGain,
+        dailyChallenges,
         addXP,
         unlockAchievement,
         incrementStat,
         clearLastXPGain,
+        completeDailyChallenge,
       }}
     >
       {children}

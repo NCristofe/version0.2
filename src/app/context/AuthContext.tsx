@@ -66,6 +66,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
+      // Log completo pra debug: o Supabase distingue "senha errada" de
+      // "e-mail não confirmado", "usuário não existe", falha de rede, etc.
+      console.error('[auth] signInWithPassword falhou:', error.status, error.message);
+
+      if (error.message.toLowerCase().includes('email not confirmed')) {
+        return { success: false, error: 'Conta ainda não confirmada. No painel do Supabase, marque "Auto Confirm User" ao criar o usuário.' };
+      }
+
       return { success: false, error: 'Senha incorreta.' };
     }
 

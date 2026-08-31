@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, UserSlot } from '../context/AuthContext';
 import { Heart, User } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAppData } from '../context/AppDataContext';
@@ -21,7 +21,7 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, navigate]);
 
-  const handleUserSelect = (userId: string) => {
+  const handleUserSelect = (userId: UserSlot) => {
     login(userId);
     navigate('/auth');
   };

@@ -86,6 +86,18 @@ export interface MessageReplyPreview {
   userId: MessageUserSlot;
 }
 
+// "Diferencial" do chat em relação a um WhatsApp normal: dá pra compartilhar
+// uma memória, evento ou meta que já existe no app como um cartão na conversa.
+export interface SharedCard {
+  kind: 'memory' | 'event' | 'goal';
+  refId: string;
+  title: string;
+  subtitle: string;
+  emoji: string;
+  color?: string;
+  imageUrl?: string;
+}
+
 export interface Message {
   id: string;
   text: string;
@@ -98,6 +110,8 @@ export interface Message {
   starredBy: MessageUserSlot[];
   replyTo?: MessageReplyPreview;
   attachments: MessageAttachment[];
+  sharedCard?: SharedCard;
+  readBy: MessageUserSlot[];
 }
 
 interface MessageRow {
@@ -112,6 +126,8 @@ interface MessageRow {
   starred_by: MessageUserSlot[];
   reply_to: MessageReplyPreview | null;
   attachments: MessageAttachment[];
+  shared_card: SharedCard | null;
+  read_by: MessageUserSlot[];
 }
 
 function rowToMessage(row: MessageRow): Message {
@@ -127,6 +143,8 @@ function rowToMessage(row: MessageRow): Message {
     starredBy: row.starred_by ?? [],
     replyTo: row.reply_to ?? undefined,
     attachments: row.attachments ?? [],
+    sharedCard: row.shared_card ?? undefined,
+    readBy: row.read_by ?? [],
   };
 }
 
@@ -264,12 +282,13 @@ interface AppDataContextType extends AppData {
   toggleMemoryFavorite: (id: string) => void;
   deleteMemory: (id: string) => void;
   // Chat
-  sendMessage: (input: { text: string; replyTo?: MessageReplyPreview; attachments?: File[] }) => Promise<void>;
+  sendMessage: (input: { text: string; replyTo?: MessageReplyPreview; attachments?: File[]; sharedCard?: SharedCard }) => Promise<void>;
   editMessage: (id: string, text: string) => Promise<void>;
   deleteMessageForMe: (id: string) => Promise<void>;
   deleteMessageForEveryone: (id: string) => Promise<void>;
   reactToMessage: (id: string, emoji: string) => Promise<void>;
   toggleStarMessage: (id: string) => Promise<void>;
+  markMessagesRead: (ids: string[]) => Promise<void>;
   // Capsules
   addCapsule: (c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => void;
   openCapsule: (id: string) => void;
@@ -820,10 +839,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [session?.user]);
 
-  const sendMessage = useCallback(async (input: { text: string; replyTo?: MessageReplyPreview; attachments?: File[] }) => {
+  const sendMessage = useCallback(async (input: { text: string; replyTo?: MessageReplyPreview; attachments?: File[]; sharedCard?: SharedCard }) => {
     if (!session?.user || !currentUser) return;
     const text = input.text.trim();
-    if (!text && (!input.attachments || input.attachments.length === 0)) return;
+    if (!text && (!input.attachments || input.attachments.length === 0) && !input.sharedCard) return;
 
     const uploaded = input.attachments && input.attachments.length > 0
       ? (await Promise.all(input.attachments.map(uploadChatAttachment))).filter((a): a is MessageAttachment => a !== null)
@@ -835,6 +854,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       sender_slot: currentUser,
       reply_to: input.replyTo ?? null,
       attachments: uploaded,
+      shared_card: input.sharedCard ?? null,
     }]);
 
     if (error) {
@@ -921,6 +941,31 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       toast.error('Não foi possível favoritar a mensagem.');
     }
   }, [currentUser, data.messages]);
+
+  const markMessagesRead = useCallback(async (ids: string[]) => {
+    if (!currentUser || ids.length === 0) return;
+
+    const { error } = await supabase.rpc('mark_messages_read', {
+      message_ids: ids,
+      slot: currentUser,
+    });
+
+    if (error) {
+      console.error('Erro ao marcar mensagens como lidas:', error);
+      return;
+    }
+
+    // Atualiza local também - a confirmação em tempo real via UPDATE chegaria
+    // de volta de qualquer forma, mas isso evita esperar a viagem de ida e volta.
+    set((p) => ({
+      ...p,
+      messages: p.messages.map((m) =>
+        ids.includes(m.id) && !m.readBy.includes(currentUser as MessageUserSlot)
+          ? { ...m, readBy: [...m.readBy, currentUser as MessageUserSlot] }
+          : m
+      ),
+    }));
+  }, [set, currentUser]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────
   const addCapsule = useCallback((c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => {
@@ -1089,7 +1134,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       addEvent, updateEvent, deleteEvent, getEventsForDate, getUpcomingEvents,
       addGoal, updateGoal, deleteGoal,
       addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory,
-      sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage,
+      sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage, markMessagesRead,
       addCapsule, openCapsule,
       addWish, deleteWish,
       answerQuestion, getDailyQuestion, getRandomQuestion,

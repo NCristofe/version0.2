@@ -1,4 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
+import { getLocalDateKey } from '../lib/date';
+import { supabase } from '../../supabase';
+import { useAuth } from './AuthContext';
+
+const GAMIFICATION_ROW_ID = 'couple';
 
 export interface Achievement {
   id: string;
@@ -194,7 +200,7 @@ const STORAGE_KEY = 'gamification_v2';
 const DAILY_CHALLENGES_KEY = 'daily_challenges_v1';
 
 function getTodayKey() {
-  return new Date().toISOString().split('T')[0];
+  return getLocalDateKey();
 }
 
 function loadDailyChallenges(): DailyChallengeState {
@@ -227,10 +233,12 @@ function loadState(): GamificationState {
 const GamificationContext = createContext<GamificationContextType | undefined>(undefined);
 
 export function GamificationProvider({ children }: { children: React.ReactNode }) {
+  const { session } = useAuth();
   const [state, setState] = useState<GamificationState>(loadState);
   const [lastXPGain, setLastXPGain] = useState<{ amount: number; reason: string } | null>(null);
   const [dailyChallenges, setDailyChallenges] = useState<DailyChallengeState>(loadDailyChallenges);
   const dailyChallengesRef = useRef(dailyChallenges);
+  const hasSyncedRef = useRef(false); // evita subir o estado local antes de saber o que já tem no servidor
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -240,6 +248,80 @@ export function GamificationProvider({ children }: { children: React.ReactNode }
     dailyChallengesRef.current = dailyChallenges;
     localStorage.setItem(DAILY_CHALLENGES_KEY, JSON.stringify(dailyChallenges));
   }, [dailyChallenges]);
+
+  // Ao logar: se já existe gamificação salva no servidor, ela vira a fonte da
+  // verdade (assim os dois aparelhos do casal veem o mesmo XP/conquistas).
+  // Se ainda não existe nada lá, sobe o progresso local em vez de perdê-lo.
+  useEffect(() => {
+    hasSyncedRef.current = false;
+
+    if (!session?.user) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const { data: row, error } = await supabase
+        .from('gamification_state')
+        .select('*')
+        .eq('id', GAMIFICATION_ROW_ID)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error('Erro ao buscar gamificação no Supabase:', error);
+        toast.error('Não foi possível carregar XP e conquistas salvos no servidor.');
+      } else if (row) {
+        setState({
+          xp: row.xp,
+          achievements: row.achievements,
+          xpHistory: row.xp_history,
+          stats: row.stats,
+        });
+        if (row.daily_challenges?.date === getTodayKey()) {
+          setDailyChallenges(row.daily_challenges);
+        }
+      } else {
+        const { error: upsertError } = await supabase.from('gamification_state').upsert({
+          id: GAMIFICATION_ROW_ID,
+          xp: state.xp,
+          achievements: state.achievements,
+          xp_history: state.xpHistory,
+          stats: state.stats,
+          daily_challenges: dailyChallengesRef.current,
+          updated_at: new Date().toISOString(),
+        });
+        if (upsertError) console.error('Erro ao subir gamificação inicial para o Supabase:', upsertError);
+      }
+
+      hasSyncedRef.current = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id]);
+
+  // Depois da primeira sincronização, toda mudança local também é salva no servidor.
+  useEffect(() => {
+    if (!session?.user || !hasSyncedRef.current) return;
+
+    supabase.from('gamification_state').upsert({
+      id: GAMIFICATION_ROW_ID,
+      xp: state.xp,
+      achievements: state.achievements,
+      xp_history: state.xpHistory,
+      stats: state.stats,
+      daily_challenges: dailyChallenges,
+      updated_at: new Date().toISOString(),
+    }).then(({ error }) => {
+      if (error) {
+        console.error('Erro ao salvar gamificação no Supabase:', error);
+        toast.error('Não foi possível salvar seu progresso no servidor.');
+      }
+    });
+  }, [state, dailyChallenges, session?.user]);
 
   const currentLevel = getLevelForXP(state.xp);
   const nextLevel = LEVELS.find((l) => l.level === currentLevel.level + 1) ?? null;

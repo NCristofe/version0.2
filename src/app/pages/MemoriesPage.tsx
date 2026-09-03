@@ -13,6 +13,7 @@ import {
   CoupleProfile,
 } from '../context/AppDataContext';
 import { useGamification } from '../context/GamificationContext';
+import { getLocalDateKey } from '../lib/date';
 import confetti from 'canvas-confetti';
 
 type TabType = 'memorias' | 'perguntas' | 'checkin';
@@ -59,14 +60,14 @@ function MemoriasTab() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [imageError, setImageError] = useState('');
   const [form, setForm] = useState({
-    title: '', description: '', date: new Date().toISOString().split('T')[0],
+    title: '', description: '', date: getLocalDateKey(),
     location: '', emotion: 'feliz' as Memory['emotion'],
     liked: false, favorited: false, userId: 'user1' as 'user1' | 'user2', // userId será sobrescrito
   });
 
   const resetForm = () => {
     setForm({
-      title: '', description: '', date: new Date().toISOString().split('T')[0],
+      title: '', description: '', date: getLocalDateKey(),
       location: '', emotion: 'feliz', liked: false, favorited: false, userId: 'user1',
     });
     setImageUrls([]); // Limpar as URLs das imagens

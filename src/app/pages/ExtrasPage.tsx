@@ -37,6 +37,7 @@ const surprises = [
 ];
 
 export default function ExtrasPage() {
+  const { addXP, incrementStat, completeDailyChallenge } = useGamification();
   const [showQuiz, setShowQuiz] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [score, setScore] = useState(0);
@@ -48,8 +49,11 @@ export default function ExtrasPage() {
     setSelectedAnswer(answerIndex);
 
     setTimeout(() => {
-      if (answerIndex === quizQuestions[currentQuestion].correctAnswer) {
-        setScore(score + 1);
+      const isCorrect = answerIndex === quizQuestions[currentQuestion].correctAnswer;
+      const finalScore = isCorrect ? score + 1 : score;
+
+      if (isCorrect) {
+        setScore(finalScore);
         confetti({
           particleCount: 100,
           spread: 70,
@@ -62,6 +66,15 @@ export default function ExtrasPage() {
         setSelectedAnswer(null);
       } else {
         setQuizComplete(true);
+        // Só conta como "feito de verdade" quando você termina o quiz -
+        // por isso o XP entra aqui, não num botão separado de "completei".
+        incrementStat('quizCompleted');
+        addXP(25, 'Quiz do Amor completo 🧠');
+        completeDailyChallenge('dc4', 25, 'Quiz do Amor completo 🧠');
+        if (finalScore === quizQuestions.length) {
+          incrementStat('perfectQuizzes');
+          addXP(50, 'Quiz do Amor perfeito 🏆');
+        }
       }
     }, 1000);
   };

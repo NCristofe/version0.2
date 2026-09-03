@@ -13,6 +13,7 @@ import {
   WishItem,
 } from '../context/AppDataContext';
 import { useGamification } from '../context/GamificationContext';
+import { getLocalDateKey } from '../lib/date';
 import confetti from 'canvas-confetti';
 
 type TabType = 'metas' | 'capsula' | 'desejos';
@@ -391,7 +392,7 @@ function CapsuleTab() {
                 <input
                   type="date"
                   className="input-base"
-                  min={new Date().toISOString().split('T')[0]}
+                  min={getLocalDateKey()}
                   value={form.openDate}
                   onChange={(e) => setForm((f) => ({ ...f, openDate: e.target.value }))}
                 />

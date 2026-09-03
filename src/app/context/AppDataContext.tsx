@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { toast } from 'sonner';
 import { supabase } from '../../supabase';
 import { useAuth } from './AuthContext';
+import { getLocalDateKey } from '../lib/date';
 
 // Linha única que guarda o perfil do casal compartilhado entre os dois logins.
 const COUPLE_PROFILE_ROW_ID = 'couple';
@@ -301,7 +302,18 @@ function uid() {
 }
 
 function today() {
-  return new Date().toISOString().split('T')[0];
+  return getLocalDateKey();
+}
+
+/**
+ * Junta o que veio do Supabase com o que já existia localmente, sem apagar
+ * nada: itens que ainda não sincronizaram (por falha de rede, RLS, etc.)
+ * continuam aparecendo em vez de sumir na próxima vez que a página carregar.
+ */
+function mergeById<T extends { id: string }>(local: T[], remote: T[]): T[] {
+  const remoteIds = new Set(remote.map((item) => item.id));
+  const localOnly = local.filter((item) => !remoteIds.has(item.id));
+  return [...remote, ...localOnly];
 }
 
 function defaultData(): AppData {
@@ -426,38 +438,108 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         // Perfil do casal é uma única linha compartilhada pelos dois logins
         const { data: profile, error: pError } = await supabase
           .from('profiles')
-          .select('couple_profile')
+          .select('couple_profile, streak')
           .eq('id', COUPLE_PROFILE_ROW_ID)
           .maybeSingle();
 
-        if (!cancelled && profile?.couple_profile && !pError) {
+        if (pError) {
+          console.error('Erro ao buscar perfil do casal no Supabase:', pError);
+          toast.error('Não foi possível carregar o perfil do casal salvo no servidor.');
+        } else if (!cancelled && profile?.couple_profile) {
           setData(prev => ({
             ...prev,
             coupleProfile: profile.couple_profile as CoupleProfile
           }));
         }
 
-        const { data: events } = await supabase
+        if (!cancelled && !pError) {
+          if (profile?.streak) {
+            // O servidor já tem um streak salvo: ele passa a ser a fonte da verdade.
+            setData(prev => ({ ...prev, streak: profile.streak as StreakState }));
+          } else {
+            // Primeira sincronização: sobe o streak local (se houver) pro servidor
+            // em vez de simplesmente perder o progresso que só existia neste aparelho.
+            setData(prev => {
+              if (prev.streak.current > 0 || prev.streak.lastActivityDate) {
+                supabase.from('profiles').upsert({
+                  id: COUPLE_PROFILE_ROW_ID,
+                  couple_profile: prev.coupleProfile,
+                  streak: prev.streak,
+                  updated_at: new Date().toISOString(),
+                }).then(({ error }) => {
+                  if (error) console.error('Erro ao subir streak inicial para o Supabase:', error);
+                });
+              }
+              return prev;
+            });
+          }
+        }
+
+        const { data: checkInRows, error: checkInsError } = await supabase
+          .from('check_ins')
+          .select('*');
+
+        if (checkInsError) {
+          console.error('Erro ao buscar check-ins do Supabase:', checkInsError);
+          toast.error('Não foi possível carregar os check-ins salvos no servidor.');
+        } else if (!cancelled && checkInRows) {
+          const remoteCheckIns: CheckIn[] = checkInRows.map((c: any) => ({
+            id: c.id,
+            date: c.date,
+            mood: c.mood,
+            userId: c.user_slot === 'user2' ? 'user2' : 'user1',
+          }));
+          setData(prev => ({ ...prev, checkIns: mergeById(prev.checkIns, remoteCheckIns) }));
+        }
+
+        const { data: events, error: eventsError } = await supabase
           .from('events')
           .select('*');
 
-        if (!cancelled && events) {
-          setData(prev => ({
-            ...prev,
-            events: events.map((e: any) => ({
-              ...e,
-              date: e.event_date, // mapeando do nome da coluna SQL para o seu tipo TS
-              time: e.event_time
-            })),
+        if (eventsError) {
+          console.error('Erro ao buscar eventos do Supabase:', eventsError);
+          toast.error('Não foi possível carregar os eventos salvos no servidor.');
+        } else if (!cancelled && events) {
+          const remoteEvents: CalendarEvent[] = events.map((e: any) => ({
+            ...e,
+            date: e.event_date, // mapeando do nome da coluna SQL para o seu tipo TS
+            time: e.event_time,
           }));
+          setData(prev => ({ ...prev, events: mergeById(prev.events, remoteEvents) }));
         }
 
-        const { data: messageRows } = await supabase
+        const { data: goalRows, error: goalsError } = await supabase
+          .from('goals')
+          .select('*');
+
+        if (goalsError) {
+          console.error('Erro ao buscar metas do Supabase:', goalsError);
+          toast.error('Não foi possível carregar as metas salvas no servidor.');
+        } else if (!cancelled && goalRows) {
+          const remoteGoals: Goal[] = goalRows.map((g: any) => ({
+            id: g.id,
+            name: g.name,
+            description: g.description ?? '',
+            category: g.category,
+            targetValue: g.target_value ?? undefined,
+            currentValue: g.current_value ?? 0,
+            deadline: g.deadline ?? '',
+            status: g.status,
+            userId: g.user_id === 'user2' ? 'user2' : 'user1',
+            createdAt: g.created_at,
+          }));
+          setData(prev => ({ ...prev, goals: mergeById(prev.goals, remoteGoals) }));
+        }
+
+        const { data: messageRows, error: messagesError } = await supabase
           .from('messages')
           .select('*')
           .order('created_at', { ascending: true });
 
-        if (!cancelled && messageRows) {
+        if (messagesError) {
+          console.error('Erro ao buscar mensagens do Supabase:', messagesError);
+          toast.error('Não foi possível carregar as mensagens salvas no servidor.');
+        } else if (!cancelled && messageRows) {
           setData(prev => ({
             ...prev,
             messages: (messageRows as MessageRow[]).map(rowToMessage),
@@ -465,6 +547,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (error) {
         console.error('Erro ao carregar dados do Supabase:', error);
+        toast.error('Não foi possível conectar ao servidor. Seus dados locais continuam salvos neste aparelho.');
       } finally {
         if (!cancelled) setData(prev => ({ ...prev, loading: false }));
       }
@@ -519,13 +602,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   // ── Events ──────────────────────────────────────────────────────────────────
   const addEvent = useCallback(async (e: Omit<CalendarEvent, 'id'>) => {
-    const newId = uid();
+    const localId = uid();
     // Otimista: Atualiza local primeiro
-    set((p) => ({ ...p, events: [...p.events, { ...e, id: newId }] }));
+    set((p) => ({ ...p, events: [...p.events, { ...e, id: localId }] }));
 
     // Persiste no Supabase se houver sessão
     if (session?.user) {
-      await supabase.from('events').insert([{
+      const { data: inserted, error } = await supabase.from('events').insert([{
         title: e.title,
         description: e.description,
         category: e.category,
@@ -533,7 +616,15 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         event_time: e.time,
         location: e.location,
         color: e.color
-      }]);
+      }]).select('id').single();
+
+      if (error) {
+        console.error('Erro ao salvar evento no Supabase:', error);
+        toast.error('Não foi possível salvar o evento no servidor. Ele só existe neste aparelho por enquanto.');
+      } else if (inserted?.id) {
+        // Troca o id local pelo id real do banco, senão editar/excluir depois não vai encontrar a linha certa.
+        set((p) => ({ ...p, events: p.events.map((ev) => ev.id === localId ? { ...ev, id: inserted.id } : ev) }));
+      }
     }
   }, [set, session?.user]);
 
@@ -541,7 +632,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     set((p) => ({ ...p, events: p.events.map((e) => e.id === id ? { ...e, ...updates } : e) }));
 
     if (session?.user) {
-      await supabase.from('events').update(updates).eq('id', id);
+      const { error } = await supabase.from('events').update(updates).eq('id', id);
+      if (error) {
+        console.error('Erro ao atualizar evento no Supabase:', error);
+        toast.error('Não foi possível salvar a alteração do evento no servidor.');
+      }
     }
   }, [set, session?.user]);
 
@@ -549,7 +644,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     set((p) => ({ ...p, events: p.events.filter((e) => e.id !== id) }));
 
     if (session?.user) {
-      await supabase.from('events').delete().eq('id', id);
+      const { error } = await supabase.from('events').delete().eq('id', id);
+      if (error) {
+        console.error('Erro ao apagar evento no Supabase:', error);
+        toast.error('Não foi possível apagar o evento no servidor.');
+      }
     }
   }, [set, session?.user]);
 
@@ -567,13 +666,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   // ── Goals ────────────────────────────────────────────────────────────────────
   const addGoal = useCallback(async (g: Omit<Goal, 'id' | 'createdAt' | 'userId'>) => {
-    const newId = uid();
+    const localId = uid();
     const createdAt = new Date().toISOString();
     if (!currentUser) return; // Não permite adicionar sem usuário logado
-    set((p) => ({ ...p, goals: [...p.goals, { ...g, id: newId, createdAt, userId: currentUser as 'user1' | 'user2' }] }));
+    set((p) => ({ ...p, goals: [...p.goals, { ...g, id: localId, createdAt, userId: currentUser as 'user1' | 'user2' }] }));
 
     if (session?.user) {
-      await supabase.from('goals').insert([{
+      const { data: inserted, error } = await supabase.from('goals').insert([{
         name: g.name,
         description: g.description,
         category: g.category,
@@ -582,21 +681,36 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         deadline: g.deadline,
         status: g.status,
         user_id: currentUser,
-      }]);
+      }]).select('id').single();
+
+      if (error) {
+        console.error('Erro ao salvar meta no Supabase:', error);
+        toast.error('Não foi possível salvar a meta no servidor. Ela só existe neste aparelho por enquanto.');
+      } else if (inserted?.id) {
+        set((p) => ({ ...p, goals: p.goals.map((goal) => goal.id === localId ? { ...goal, id: inserted.id } : goal) }));
+      }
     }
   }, [set, currentUser, session?.user]);
 
   const updateGoal = useCallback(async (id: string, updates: Partial<Goal>) => {
     set((p) => ({ ...p, goals: p.goals.map((g) => g.id === id ? { ...g, ...updates } : g) }));
     if (session?.user) {
-      await supabase.from('goals').update(updates).eq('id', id);
+      const { error } = await supabase.from('goals').update(updates).eq('id', id);
+      if (error) {
+        console.error('Erro ao atualizar meta no Supabase:', error);
+        toast.error('Não foi possível salvar a alteração da meta no servidor.');
+      }
     }
   }, [set, session?.user]);
 
   const deleteGoal = useCallback(async (id: string) => {
     set((p) => ({ ...p, goals: p.goals.filter((g) => g.id !== id) }));
     if (session?.user) {
-      await supabase.from('goals').delete().eq('id', id);
+      const { error } = await supabase.from('goals').delete().eq('id', id);
+      if (error) {
+        console.error('Erro ao apagar meta no Supabase:', error);
+        toast.error('Não foi possível apagar a meta no servidor.');
+      }
     }
   }, [set, session?.user]);
 
@@ -668,7 +782,11 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const deleteMemory = useCallback(async (id: string) => {
     set((p) => ({ ...p, memories: p.memories.filter((m) => m.id !== id) }));
     if (session?.user) {
-      await supabase.from('memories').delete().eq('id', id);
+      const { error } = await supabase.from('memories').delete().eq('id', id);
+      if (error) {
+        console.error('Erro ao apagar memória no Supabase:', error);
+        toast.error('Não foi possível apagar a memória no servidor.');
+      }
     }
   }, [set, session?.user]);
 
@@ -721,6 +839,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
     if (error) {
       console.error('Erro ao enviar mensagem:', error);
+      toast.error('Não foi possível enviar a mensagem. Tente de novo.');
     }
   }, [session, currentUser, uploadChatAttachment]);
 
@@ -732,7 +851,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       .update({ text: trimmed, edited_at: new Date().toISOString() })
       .eq('id', id);
 
-    if (error) console.error('Erro ao editar mensagem:', error);
+    if (error) {
+      console.error('Erro ao editar mensagem:', error);
+      toast.error('Não foi possível editar a mensagem.');
+    }
   }, []);
 
   const deleteMessageForMe = useCallback(async (id: string) => {
@@ -745,7 +867,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       : [...message.deletedFor, currentUser];
 
     const { error } = await supabase.from('messages').update({ deleted_for: nextDeletedFor }).eq('id', id);
-    if (error) console.error('Erro ao apagar mensagem:', error);
+    if (error) {
+      console.error('Erro ao apagar mensagem:', error);
+      toast.error('Não foi possível apagar a mensagem.');
+    }
   }, [currentUser, data.messages]);
 
   const deleteMessageForEveryone = useCallback(async (id: string) => {
@@ -755,7 +880,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       deleted_for_everyone: true,
     }).eq('id', id);
 
-    if (error) console.error('Erro ao apagar mensagem:', error);
+    if (error) {
+      console.error('Erro ao apagar mensagem:', error);
+      toast.error('Não foi possível apagar a mensagem para todos.');
+    }
   }, []);
 
   const reactToMessage = useCallback(async (id: string, emoji: string) => {
@@ -772,7 +900,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     nextReactions[emoji] = [...(nextReactions[emoji] ?? []), currentUser];
 
     const { error } = await supabase.from('messages').update({ reactions: nextReactions }).eq('id', id);
-    if (error) console.error('Erro ao reagir à mensagem:', error);
+    if (error) {
+      console.error('Erro ao reagir à mensagem:', error);
+      toast.error('Não foi possível registrar a reação.');
+    }
   }, [currentUser, data.messages]);
 
   const toggleStarMessage = useCallback(async (id: string) => {
@@ -785,7 +916,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       : [...message.starredBy, currentUser];
 
     const { error } = await supabase.from('messages').update({ starred_by: nextStarredBy }).eq('id', id);
-    if (error) console.error('Erro ao favoritar mensagem:', error);
+    if (error) {
+      console.error('Erro ao favoritar mensagem:', error);
+      toast.error('Não foi possível favoritar a mensagem.');
+    }
   }, [currentUser, data.messages]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────
@@ -831,18 +965,33 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [data.questions]);
 
   // ── Check-in ──────────────────────────────────────────────────────────────────
-  const addCheckIn = useCallback((mood: MoodType) => {
+  const addCheckIn = useCallback(async (mood: MoodType) => {
     const date = today();
     if (!currentUser) return; // Não permite adicionar sem usuário logado
+    const localId = uid();
     set((p) => ({
       ...p,
       checkIns: [
-        { id: uid(), date, mood, userId: currentUser as 'user1' | 'user2' },
+        { id: localId, date, mood, userId: currentUser as 'user1' | 'user2' },
         ...p.checkIns.filter((c) => c.date !== date),
       ],
     }));
-    // TODO: Persistir check-in no Supabase com userId
-  }, [set, currentUser]);
+
+    if (session?.user) {
+      const { data: inserted, error } = await supabase.from('check_ins').insert([{
+        date,
+        mood,
+        user_slot: currentUser,
+      }]).select('id').single();
+
+      if (error) {
+        console.error('Erro ao salvar check-in no Supabase:', error);
+        toast.error('Não foi possível salvar o check-in no servidor.');
+      } else if (inserted?.id) {
+        set((p) => ({ ...p, checkIns: p.checkIns.map((c) => c.id === localId ? { ...c, id: inserted.id } : c) }));
+      }
+    }
+  }, [set, currentUser, session?.user]);
 
   const getTodayCheckIn = useCallback((): CheckIn | null => {
     return data.checkIns.find((c) => c.date === today()) ?? null;
@@ -855,12 +1004,28 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       if (p.streak.lastActivityDate === t) return p;
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const yStr = yesterday.toISOString().split('T')[0];
+      const yStr = getLocalDateKey(yesterday);
       const newCurrent = p.streak.lastActivityDate === yStr ? p.streak.current + 1 : 1;
       const newLongest = Math.max(p.streak.longest, newCurrent);
-      return { ...p, streak: { current: newCurrent, longest: newLongest, lastActivityDate: t } };
+      const newStreak: StreakState = { current: newCurrent, longest: newLongest, lastActivityDate: t };
+
+      if (session?.user) {
+        supabase.from('profiles').upsert({
+          id: COUPLE_PROFILE_ROW_ID,
+          couple_profile: p.coupleProfile,
+          streak: newStreak,
+          updated_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) {
+            console.error('Erro ao salvar streak no Supabase:', error);
+            toast.error('Não foi possível salvar sua sequência de dias no servidor.');
+          }
+        });
+      }
+
+      return { ...p, streak: newStreak };
     });
-  }, [set]);
+  }, [set, session?.user]);
 
   // ── Profile ───────────────────────────────────────────────────────────────────
   const updatePersonProfile = useCallback(async (personId: 'user1' | 'user2', updates: Partial<PersonProfile>, file?: File) => {

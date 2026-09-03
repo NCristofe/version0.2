@@ -1,8 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
-import { useAppData, Message, MessageAttachment, MessageReplyPreview } from '../context/AppDataContext';
-import { useGamification } from '../context/GamificationContext';
 import {
+  useAppData,
+  Message,
+  MessageAttachment,
+  MessageReplyPreview,
+  SharedCard,
+  EVENT_CATEGORIES,
+  GOAL_CATEGORIES,
+  EMOTIONS,
+} from '../context/AppDataContext';
+import { useGamification } from '../context/GamificationContext';
+import { usePresence } from '../context/PresenceContext';
+import {
+  BookHeart,
+  CalendarHeart,
   Check,
   CheckCheck,
   Edit3,
@@ -11,11 +24,14 @@ import {
   Mic,
   MoreHorizontal,
   Paperclip,
+  Plus,
   Reply,
   Search,
   Send,
   Smile,
+  Sparkles,
   Star,
+  Target,
   Trash2,
   X,
 } from 'lucide-react';
@@ -54,9 +70,11 @@ function formatBytes(bytes: number) {
 }
 
 export default function MessagesPage() {
+  const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const { coupleProfile, messages, sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage } = useAppData();
+  const { coupleProfile, messages, memories, events, goals, sendMessage, editMessage, deleteMessageForMe, deleteMessageForEveryone, reactToMessage, toggleStarMessage, markMessagesRead } = useAppData();
   const { incrementStat, unlockAchievement, completeDailyChallenge } = useGamification();
+  const { presence, setTyping } = usePresence();
   const currentUserId: UserId = currentUser === 'user2' ? 'user2' : 'user1';
   const otherUserId: UserId = currentUserId === 'user1' ? 'user2' : 'user1';
 
@@ -64,8 +82,10 @@ export default function MessagesPage() {
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showQuickMessages, setShowQuickMessages] = useState(false);
+  const [showSharePicker, setShowSharePicker] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<MessageReplyPreview | null>(null);
+  const [pendingCard, setPendingCard] = useState<SharedCard | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -78,7 +98,6 @@ export default function MessagesPage() {
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
 
   const otherProfile = coupleProfile[otherUserId];
-  const currentProfile = coupleProfile[currentUserId];
 
   const visibleMessages = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -104,9 +123,40 @@ export default function MessagesPage() {
     pendingAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
   }, []);
 
+  // "Digitando..." de verdade: avisa o outro enquanto você escreve e some
+  // sozinho depois de alguns segundos sem digitar (ou ao enviar).
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    const hasText = value.trim().length > 0;
+    setTyping(hasText);
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (hasText) {
+      typingTimeoutRef.current = setTimeout(() => setTyping(false), 3000);
+    }
+  };
+
+  useEffect(() => () => {
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+  }, []);
+
+  // Confirmação de leitura: marca como lida qualquer mensagem do outro que
+  // ainda não foi vista, sempre que a conversa está aberta.
+  useEffect(() => {
+    const unreadIds = messages
+      .filter((m) => m.senderId !== currentUserId && !m.readBy.includes(currentUserId))
+      .map((m) => m.id);
+    if (unreadIds.length > 0) markMessagesRead(unreadIds);
+  }, [messages, currentUserId, markMessagesRead]);
+
   const sendCurrentMessage = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed && pendingAttachments.length === 0) return;
+    if (!trimmed && pendingAttachments.length === 0 && !pendingCard) return;
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    setTyping(false);
 
     if (editingMessageId) {
       const id = editingMessageId;
@@ -117,17 +167,64 @@ export default function MessagesPage() {
     }
 
     const filesToSend = pendingAttachments.map((attachment) => attachment.file);
+    const cardToSend = pendingCard ?? undefined;
     pendingAttachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
 
     setInput('');
     setReplyTo(null);
     setPendingAttachments([]);
+    setPendingCard(null);
     setShowQuickMessages(false);
 
-    await sendMessage({ text: trimmed, replyTo: replyTo ?? undefined, attachments: filesToSend });
+    await sendMessage({ text: trimmed, replyTo: replyTo ?? undefined, attachments: filesToSend, sharedCard: cardToSend });
     incrementStat('messagesSent');
     unlockAchievement('first_message');
     completeDailyChallenge('dc1', 10, 'Mensagem carinhosa enviada 💌');
+  };
+
+  const shareMemory = (memory: (typeof memories)[number]) => {
+    const emotion = EMOTIONS.find((e) => e.id === memory.emotion);
+    setPendingCard({
+      kind: 'memory',
+      refId: memory.id,
+      title: memory.title,
+      subtitle: new Date(`${memory.date}T00:00:00`).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' }),
+      emoji: emotion?.emoji ?? '💖',
+      imageUrl: memory.imageUrls?.[0],
+    });
+    setShowSharePicker(false);
+  };
+
+  const shareEvent = (event: (typeof events)[number]) => {
+    const category = EVENT_CATEGORIES[event.category];
+    setPendingCard({
+      kind: 'event',
+      refId: event.id,
+      title: event.title,
+      subtitle: new Date(`${event.date}T00:00:00`).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' }),
+      emoji: category.emoji,
+      color: category.color,
+    });
+    setShowSharePicker(false);
+  };
+
+  const shareGoal = (goal: (typeof goals)[number]) => {
+    const category = GOAL_CATEGORIES[goal.category];
+    const progress = goal.targetValue ? `${goal.currentValue}/${goal.targetValue}` : `${goal.currentValue}`;
+    setPendingCard({
+      kind: 'goal',
+      refId: goal.id,
+      title: goal.name,
+      subtitle: `${category.label} · ${progress}`,
+      emoji: category.emoji,
+    });
+    setShowSharePicker(false);
+  };
+
+  const openSharedCard = (card: SharedCard) => {
+    if (card.kind === 'memory') navigate('/memories');
+    else if (card.kind === 'event') navigate('/calendar');
+    else navigate('/goals');
   };
 
   const attachFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -214,6 +311,15 @@ export default function MessagesPage() {
     });
   };
 
+  const otherPresence = presence[otherUserId];
+  const statusText = otherPresence.typing
+    ? `${otherProfile.name} digitando...`
+    : otherPresence.online
+      ? 'online agora'
+      : otherPresence.lastSeenAt
+        ? `visto por último às ${formatTime(otherPresence.lastSeenAt)}`
+        : 'offline';
+
   return (
     <div className="h-screen flex flex-col max-w-md mx-auto bg-background">
       <div className="bg-card/95 backdrop-blur-lg border-b border-border shadow-sm">
@@ -221,8 +327,8 @@ export default function MessagesPage() {
           <UserAvatar userId={otherUserId} className="w-12 h-12" fallbackClassName="text-2xl bg-primary/10" />
           <div className="flex-1 min-w-0">
             <h1 className="text-lg text-foreground truncate">{otherProfile.name}</h1>
-            <p className="text-xs text-muted-foreground">
-              {input ? `${currentProfile.name} digitando...` : 'online agora'}
+            <p className={`text-xs ${otherPresence.typing ? 'text-primary' : 'text-muted-foreground'}`}>
+              {statusText}
             </p>
           </div>
           <button
@@ -296,6 +402,11 @@ export default function MessagesPage() {
                       <p className="italic opacity-70">Mensagem apagada</p>
                     ) : (
                       <>
+                        {message.sharedCard && (
+                          <div className="mb-2">
+                            <SharedCardView card={message.sharedCard} onOpen={() => openSharedCard(message.sharedCard!)} isCurrentUser={isCurrentUser} />
+                          </div>
+                        )}
                         {message.attachments.length > 0 && (
                           <div className="space-y-2 mb-2">
                             {message.attachments.map((attachment) => (
@@ -313,7 +424,11 @@ export default function MessagesPage() {
                       {isStarred && <Star className="w-3 h-3" fill="currentColor" />}
                       {message.editedAt && <span>editada</span>}
                       <span>{formatTime(message.createdAt)}</span>
-                      {isCurrentUser && (message.deletedForEveryone ? <Check size={13} /> : <CheckCheck size={13} />)}
+                      {isCurrentUser && (
+                        message.deletedForEveryone
+                          ? <Check size={13} />
+                          : <CheckCheck size={13} className={message.readBy.includes(otherUserId) ? 'text-sky-400' : ''} />
+                      )}
                     </div>
                   </button>
 
@@ -385,7 +500,7 @@ export default function MessagesPage() {
             </motion.div>
           )}
 
-          {(replyTo || editingMessageId || pendingAttachments.length > 0 || isRecording) && (
+          {(replyTo || editingMessageId || pendingAttachments.length > 0 || pendingCard || isRecording) && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
@@ -417,6 +532,14 @@ export default function MessagesPage() {
                   title="Gravando áudio"
                   text="Toque no microfone para parar e anexar."
                   onClose={stopRecording}
+                />
+              )}
+              {pendingCard && (
+                <PreviewBar
+                  icon={<span>{pendingCard.emoji}</span>}
+                  title={`Compartilhando ${pendingCard.kind === 'memory' ? 'memória' : pendingCard.kind === 'event' ? 'evento' : 'meta'}`}
+                  text={pendingCard.title}
+                  onClose={() => setPendingCard(null)}
                 />
               )}
               {pendingAttachments.length > 0 && (
@@ -469,9 +592,17 @@ export default function MessagesPage() {
             <Paperclip size={20} />
           </button>
 
+          <button
+            onClick={() => setShowSharePicker(true)}
+            title="Compartilhar memória, evento ou meta"
+            className="w-11 h-11 rounded-full bg-muted text-muted-foreground flex items-center justify-center shrink-0 hover:text-primary transition-colors"
+          >
+            <Sparkles size={20} />
+          </button>
+
           <textarea
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => handleInputChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -520,6 +651,20 @@ export default function MessagesPage() {
           />
         </div>
       </div>
+
+      <AnimatePresence>
+        {showSharePicker && (
+          <SharePickerSheet
+            memories={memories}
+            events={events}
+            goals={goals}
+            onClose={() => setShowSharePicker(false)}
+            onPickMemory={shareMemory}
+            onPickEvent={shareEvent}
+            onPickGoal={shareGoal}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -549,6 +694,193 @@ function AttachmentView({ attachment }: { attachment: MessageAttachment }) {
         <span className="block text-xs opacity-70">{formatBytes(attachment.size)}</span>
       </span>
     </a>
+  );
+}
+
+function SharedCardView({ card, onOpen, isCurrentUser }: { card: SharedCard; onOpen: () => void; isCurrentUser: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+      className={`w-full flex items-center gap-3 rounded-xl p-2.5 text-left transition-colors ${
+        isCurrentUser ? 'bg-white/15 hover:bg-white/20' : 'bg-muted hover:bg-muted/70'
+      }`}
+    >
+      {card.imageUrl ? (
+        <img src={card.imageUrl} alt={card.title} className="w-12 h-12 rounded-lg object-cover shrink-0" />
+      ) : (
+        <div
+          className="w-12 h-12 rounded-lg flex items-center justify-center text-xl shrink-0"
+          style={{ backgroundColor: card.color ? `${card.color}30` : undefined }}
+        >
+          {card.emoji}
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className={`text-[10px] uppercase tracking-wider ${isCurrentUser ? 'text-white/70' : 'text-primary'}`}>
+          {card.kind === 'memory' ? 'Memória' : card.kind === 'event' ? 'Evento' : 'Meta'}
+        </p>
+        <p className="text-sm truncate">{card.title}</p>
+        <p className={`text-xs truncate ${isCurrentUser ? 'text-white/70' : 'text-muted-foreground'}`}>{card.subtitle}</p>
+      </div>
+    </button>
+  );
+}
+
+function SharePickerSheet({
+  memories,
+  events,
+  goals,
+  onClose,
+  onPickMemory,
+  onPickEvent,
+  onPickGoal,
+}: {
+  memories: ReturnType<typeof useAppData>['memories'];
+  events: ReturnType<typeof useAppData>['events'];
+  goals: ReturnType<typeof useAppData>['goals'];
+  onClose: () => void;
+  onPickMemory: (memory: ReturnType<typeof useAppData>['memories'][number]) => void;
+  onPickEvent: (event: ReturnType<typeof useAppData>['events'][number]) => void;
+  onPickGoal: (goal: ReturnType<typeof useAppData>['goals'][number]) => void;
+}) {
+  const [tab, setTab] = useState<'memories' | 'events' | 'goals'>('memories');
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 28 }}
+        className="bg-card w-full max-w-md mx-auto rounded-t-3xl p-5 max-h-[80vh] overflow-y-auto"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg text-primary">Compartilhar</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex rounded-2xl bg-muted p-1 gap-1 mb-4">
+          {([
+            { key: 'memories' as const, label: 'Memórias', icon: BookHeart },
+            { key: 'events' as const, label: 'Eventos', icon: CalendarHeart },
+            { key: 'goals' as const, label: 'Metas', icon: Target },
+          ]).map((option) => (
+            <button
+              key={option.key}
+              onClick={() => setTab(option.key)}
+              className={`flex-1 py-2 rounded-xl transition-all text-xs flex items-center justify-center gap-1.5 ${
+                tab === option.key ? 'bg-card shadow-md text-primary' : 'text-muted-foreground'
+              }`}
+            >
+              <option.icon className="w-3.5 h-3.5" />
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="space-y-2">
+          {tab === 'memories' && (
+            memories.length === 0 ? (
+              <EmptyPickerState text="Nenhuma memória registrada ainda" />
+            ) : (
+              memories.map((memory) => (
+                <button
+                  key={memory.id}
+                  onClick={() => onPickMemory(memory)}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-muted/40 hover:bg-muted transition-colors text-left"
+                >
+                  {memory.imageUrls?.[0] ? (
+                    <img src={memory.imageUrls[0]} alt={memory.title} className="w-11 h-11 rounded-xl object-cover shrink-0" />
+                  ) : (
+                    <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center text-lg shrink-0">
+                      {EMOTIONS.find((e) => e.id === memory.emotion)?.emoji ?? '💖'}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm truncate">{memory.title}</p>
+                    <p className="text-xs text-muted-foreground truncate">{memory.date}</p>
+                  </div>
+                </button>
+              ))
+            )
+          )}
+
+          {tab === 'events' && (
+            events.length === 0 ? (
+              <EmptyPickerState text="Nenhum evento na agenda ainda" />
+            ) : (
+              events.map((event) => {
+                const category = EVENT_CATEGORIES[event.category];
+                return (
+                  <button
+                    key={event.id}
+                    onClick={() => onPickEvent(event)}
+                    className="w-full flex items-center gap-3 p-3 rounded-2xl bg-muted/40 hover:bg-muted transition-colors text-left"
+                  >
+                    <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ backgroundColor: `${category.color}25` }}>
+                      {category.emoji}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm truncate">{event.title}</p>
+                      <p className="text-xs text-muted-foreground truncate">{event.date}</p>
+                    </div>
+                  </button>
+                );
+              })
+            )
+          )}
+
+          {tab === 'goals' && (
+            goals.length === 0 ? (
+              <EmptyPickerState text="Nenhuma meta criada ainda" />
+            ) : (
+              goals.map((goal) => {
+                const category = GOAL_CATEGORIES[goal.category];
+                return (
+                  <button
+                    key={goal.id}
+                    onClick={() => onPickGoal(goal)}
+                    className="w-full flex items-center gap-3 p-3 rounded-2xl bg-muted/40 hover:bg-muted transition-colors text-left"
+                  >
+                    <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center text-lg shrink-0">
+                      {category.emoji}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm truncate">{goal.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {goal.targetValue ? `${goal.currentValue}/${goal.targetValue}` : goal.currentValue}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })
+            )
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function EmptyPickerState({ text }: { text: string }) {
+  return (
+    <div className="text-center py-10 text-muted-foreground">
+      <Plus className="w-8 h-8 mx-auto mb-2 opacity-30" />
+      <p className="text-sm">{text}</p>
+    </div>
   );
 }
 

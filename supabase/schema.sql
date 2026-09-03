@@ -89,8 +89,27 @@ create table if not exists public.messages (
   reactions jsonb not null default '{}',
   starred_by text[] not null default '{}',
   reply_to jsonb,
-  attachments jsonb not null default '[]'
+  attachments jsonb not null default '[]',
+  shared_card jsonb,
+  read_by text[] not null default '{}'
 );
+
+alter table public.messages add column if not exists shared_card jsonb;
+alter table public.messages add column if not exists read_by text[] not null default '{}';
+
+-- Marca várias mensagens como lidas de uma vez só (usado pelo chat ao abrir
+-- a conversa) sem precisar de uma chamada de rede por mensagem.
+create or replace function public.mark_messages_read(message_ids uuid[], slot text)
+returns void
+language sql
+security invoker
+as $$
+  update public.messages
+  set read_by = array_append(read_by, slot)
+  where id = any(message_ids)
+    and sender_slot <> slot
+    and not (slot = any(read_by));
+$$;
 
 -- ─── Row Level Security ───────────────────────────────────────────────────────
 

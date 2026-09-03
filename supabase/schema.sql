@@ -9,9 +9,34 @@
 -- ─── Tabelas ────────────────────────────────────────────────────────────────
 
 -- Perfil do casal: uma única linha compartilhada pelos dois logins.
+-- "streak" também mora aqui porque é um valor único do casal (não por pessoa).
 create table if not exists public.profiles (
   id text primary key,
   couple_profile jsonb not null,
+  streak jsonb,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.profiles add column if not exists streak jsonb;
+
+-- Check-ins de humor (histórico, um por pessoa por dia).
+create table if not exists public.check_ins (
+  id uuid primary key default gen_random_uuid(),
+  date date not null,
+  mood text not null,
+  user_slot text not null check (user_slot in ('user1', 'user2')),
+  created_at timestamptz not null default now()
+);
+
+-- Gamificação (XP, conquistas, histórico de XP, estatísticas, desafios diários):
+-- também é uma única linha compartilhada pelo casal, igual o profiles.
+create table if not exists public.gamification_state (
+  id text primary key,
+  xp integer not null default 0,
+  achievements jsonb not null default '[]',
+  xp_history jsonb not null default '[]',
+  stats jsonb not null default '{}',
+  daily_challenges jsonb not null default '{}',
   updated_at timestamptz not null default now()
 );
 
@@ -74,9 +99,19 @@ alter table public.events enable row level security;
 alter table public.goals enable row level security;
 alter table public.memories enable row level security;
 alter table public.messages enable row level security;
+alter table public.check_ins enable row level security;
+alter table public.gamification_state enable row level security;
 
 drop policy if exists "casal acessa profiles" on public.profiles;
 create policy "casal acessa profiles" on public.profiles
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "casal acessa check_ins" on public.check_ins;
+create policy "casal acessa check_ins" on public.check_ins
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "casal acessa gamification_state" on public.gamification_state;
+create policy "casal acessa gamification_state" on public.gamification_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 
 drop policy if exists "casal acessa events" on public.events;

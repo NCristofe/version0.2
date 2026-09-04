@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '../../supabase';
 import { useAuth } from './AuthContext';
@@ -62,8 +62,11 @@ export interface Memory {
   date: string;
   location: string;
   emotion: 'feliz' | 'apaixonado' | 'grato' | 'divertido';
-  liked: boolean;
-  favorited: boolean;
+  likedBy: MessageUserSlot[];
+  favoritedBy: MessageUserSlot[];
+  // Calculados a partir de likedBy/favoritedBy relativo a quem está vendo (ver memoriesForUI).
+  liked?: boolean;
+  favorited?: boolean;
   userId: 'user1' | 'user2'; // Adicionado userId
   createdAt: string;
   imageUrls?: string[];
@@ -277,7 +280,7 @@ interface AppDataContextType extends AppData {
   updateGoal: (id: string, updates: Partial<Goal>) => void;
   deleteGoal: (id: string) => void;
   // Memories
-  addMemory: (m: Omit<Memory, 'id' | 'createdAt'>, files?: File[]) => Promise<void>;
+  addMemory: (m: Omit<Memory, 'id' | 'createdAt' | 'userId' | 'likedBy' | 'favoritedBy' | 'liked' | 'favorited'>, files?: File[]) => Promise<void>;
   toggleMemoryLike: (id: string) => void;
   toggleMemoryFavorite: (id: string) => void;
   deleteMemory: (id: string) => void;
@@ -391,6 +394,9 @@ function loadData(): AppData {
       const memories = (parsed.memories ?? def.memories).map((m: Memory) => ({
         ...m,
         imageUrls: images[m.id] ?? m.imageUrls ?? [],
+        // Dados antigos salvos antes de likedBy/favoritedBy existirem (só tinham um boolean).
+        likedBy: Array.isArray(m.likedBy) ? m.likedBy : [],
+        favoritedBy: Array.isArray(m.favoritedBy) ? m.favoritedBy : [],
       }));
       // merge questions to always have full pool
       return {
@@ -550,6 +556,94 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
           setData(prev => ({ ...prev, goals: mergeById(prev.goals, remoteGoals) }));
         }
 
+        const { data: memoryRows, error: memoriesError } = await supabase
+          .from('memories')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (memoriesError) {
+          console.error('Erro ao buscar memórias do Supabase:', memoriesError);
+          toast.error('Não foi possível carregar as memórias salvas no servidor.');
+        } else if (!cancelled && memoryRows) {
+          const remoteMemories: Memory[] = memoryRows.map((m: any) => ({
+            id: m.id,
+            title: m.title,
+            description: m.description ?? '',
+            date: m.memory_date ?? '',
+            location: m.location ?? '',
+            emotion: m.emotion,
+            likedBy: m.liked_by ?? [],
+            favoritedBy: m.favorited_by ?? [],
+            userId: m.user_slot === 'user2' ? 'user2' : 'user1',
+            createdAt: m.created_at,
+            imageUrls: m.image_urls ?? [],
+          }));
+          setData(prev => ({ ...prev, memories: mergeById(prev.memories, remoteMemories) }));
+        }
+
+        const { data: capsuleRows, error: capsulesError } = await supabase
+          .from('time_capsules')
+          .select('*');
+
+        if (capsulesError) {
+          console.error('Erro ao buscar cápsulas do Supabase:', capsulesError);
+          toast.error('Não foi possível carregar as cápsulas salvas no servidor.');
+        } else if (!cancelled && capsuleRows) {
+          const remoteCapsules: TimeCapsule[] = capsuleRows.map((c: any) => ({
+            id: c.id,
+            title: c.title,
+            message: c.message,
+            openDate: c.open_date,
+            createdAt: c.created_at,
+            opened: c.opened,
+          }));
+          setData(prev => ({ ...prev, capsules: mergeById(prev.capsules, remoteCapsules) }));
+        }
+
+        const { data: wishRows, error: wishesError } = await supabase
+          .from('wishes')
+          .select('*');
+
+        if (wishesError) {
+          console.error('Erro ao buscar desejos do Supabase:', wishesError);
+          toast.error('Não foi possível carregar os desejos salvos no servidor.');
+        } else if (!cancelled && wishRows) {
+          const remoteWishes: WishItem[] = wishRows.map((w: any) => ({
+            id: w.id,
+            name: w.name,
+            description: w.description ?? '',
+            link: w.link ?? undefined,
+            category: w.category ?? '',
+            priority: w.priority,
+            owner: w.owner ?? '',
+          }));
+          setData(prev => ({ ...prev, wishes: mergeById(prev.wishes, remoteWishes) }));
+        }
+
+        const { data: answerRows, error: answersError } = await supabase
+          .from('question_answers')
+          .select('*');
+
+        if (answersError) {
+          console.error('Erro ao buscar respostas de perguntas do Supabase:', answersError);
+          toast.error('Não foi possível carregar as respostas das perguntas no servidor.');
+        } else if (!cancelled && answerRows && currentUser) {
+          const partnerSlot: 'user1' | 'user2' = currentUser === 'user1' ? 'user2' : 'user1';
+          setData(prev => ({
+            ...prev,
+            questions: prev.questions.map((q) => {
+              const mine = answerRows.find((a: any) => a.question_id === q.id && a.user_slot === currentUser);
+              const partner = answerRows.find((a: any) => a.question_id === q.id && a.user_slot === partnerSlot);
+              return {
+                ...q,
+                myAnswer: mine?.answer ?? q.myAnswer,
+                answeredAt: mine?.answered_at ?? q.answeredAt,
+                partnerAnswer: partner?.answer ?? q.partnerAnswer,
+              };
+            }),
+          }));
+        }
+
         const { data: messageRows, error: messagesError } = await supabase
           .from('messages')
           .select('*')
@@ -575,7 +669,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, currentUser]);
 
   // Inscrição Realtime para Chat (independente da sessão; RLS controla o acesso)
   useEffect(() => {
@@ -734,7 +828,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [set, session?.user]);
 
   // ── Memories ─────────────────────────────────────────────────────────────────
-  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt' | 'userId'>, files?: File[]) => {
+  const addMemory = useCallback(async (m: Omit<Memory, 'id' | 'createdAt' | 'userId' | 'likedBy' | 'favoritedBy' | 'liked' | 'favorited'>, files?: File[]) => {
     if (!currentUser) return; // Não permite adicionar sem usuário logado
     let uploadedUrls: string[] = m.imageUrls || [];
     let insertedId: string | null = null;
@@ -772,7 +866,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         emotion: m.emotion,
         location: m.location,
         image_urls: uploadedUrls,
-        user_id: session.user.id // Este user_id do Supabase é diferente do 'user1'/'user2'
+        user_id: session.user.id, // Este user_id do Supabase é diferente do 'user1'/'user2'
+        user_slot: currentUser,
       }]).select('id').single();
 
       if (insertError) {
@@ -786,17 +881,47 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     // Atualização do estado local (UI)
     set((p) => ({
       ...p,
-      memories: [{ ...m, imageUrls: uploadedUrls, id: insertedId ?? uid(), createdAt: new Date().toISOString(), userId: currentUser as 'user1' | 'user2' }, ...p.memories]
+      memories: [{ ...m, imageUrls: uploadedUrls, id: insertedId ?? uid(), createdAt: new Date().toISOString(), userId: currentUser as 'user1' | 'user2', likedBy: [], favoritedBy: [] }, ...p.memories]
     }));
   }, [set, currentUser, session?.user]);
 
-  const toggleMemoryLike = useCallback((id: string) => {
-    set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, liked: !m.liked } : m) }));
-  }, [set]);
+  const toggleMemoryLike = useCallback(async (id: string) => {
+    if (!currentUser) return;
+    const memory = data.memories.find((m) => m.id === id);
+    if (!memory) return;
+    const nextLikedBy = memory.likedBy.includes(currentUser)
+      ? memory.likedBy.filter((u) => u !== currentUser)
+      : [...memory.likedBy, currentUser];
 
-  const toggleMemoryFavorite = useCallback((id: string) => {
-    set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, favorited: !m.favorited } : m) }));
-  }, [set]);
+    set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, likedBy: nextLikedBy } : m) }));
+
+    if (session?.user) {
+      const { error } = await supabase.from('memories').update({ liked_by: nextLikedBy }).eq('id', id);
+      if (error) {
+        console.error('Erro ao curtir memória no Supabase:', error);
+        toast.error('Não foi possível salvar a curtida no servidor.');
+      }
+    }
+  }, [set, currentUser, session?.user, data.memories]);
+
+  const toggleMemoryFavorite = useCallback(async (id: string) => {
+    if (!currentUser) return;
+    const memory = data.memories.find((m) => m.id === id);
+    if (!memory) return;
+    const nextFavoritedBy = memory.favoritedBy.includes(currentUser)
+      ? memory.favoritedBy.filter((u) => u !== currentUser)
+      : [...memory.favoritedBy, currentUser];
+
+    set((p) => ({ ...p, memories: p.memories.map((m) => m.id === id ? { ...m, favoritedBy: nextFavoritedBy } : m) }));
+
+    if (session?.user) {
+      const { error } = await supabase.from('memories').update({ favorited_by: nextFavoritedBy }).eq('id', id);
+      if (error) {
+        console.error('Erro ao favoritar memória no Supabase:', error);
+        toast.error('Não foi possível salvar o favorito no servidor.');
+      }
+    }
+  }, [set, currentUser, session?.user, data.memories]);
 
   const deleteMemory = useCallback(async (id: string) => {
     set((p) => ({ ...p, memories: p.memories.filter((m) => m.id !== id) }));
@@ -968,33 +1093,102 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [set, currentUser]);
 
   // ── Capsules ──────────────────────────────────────────────────────────────────
-  const addCapsule = useCallback((c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => {
-    set((p) => ({ ...p, capsules: [...p.capsules, { ...c, id: uid(), createdAt: new Date().toISOString(), opened: false }] }));
-  }, [set]);
+  const addCapsule = useCallback(async (c: Omit<TimeCapsule, 'id' | 'createdAt' | 'opened'>) => {
+    const localId = uid();
+    const createdAt = new Date().toISOString();
+    set((p) => ({ ...p, capsules: [...p.capsules, { ...c, id: localId, createdAt, opened: false }] }));
 
-  const openCapsule = useCallback((id: string) => {
+    if (session?.user) {
+      const { data: inserted, error } = await supabase.from('time_capsules').insert([{
+        title: c.title,
+        message: c.message,
+        open_date: c.openDate,
+        user_slot: currentUser,
+      }]).select('id').single();
+
+      if (error) {
+        console.error('Erro ao salvar cápsula no Supabase:', error);
+        toast.error('Não foi possível salvar a cápsula no servidor. Ela só existe neste aparelho por enquanto.');
+      } else if (inserted?.id) {
+        set((p) => ({ ...p, capsules: p.capsules.map((cap) => cap.id === localId ? { ...cap, id: inserted.id } : cap) }));
+      }
+    }
+  }, [set, session?.user, currentUser]);
+
+  const openCapsule = useCallback(async (id: string) => {
     set((p) => ({ ...p, capsules: p.capsules.map((c) => c.id === id ? { ...c, opened: true } : c) }));
-  }, [set]);
+
+    if (session?.user) {
+      const { error } = await supabase.from('time_capsules').update({ opened: true }).eq('id', id);
+      if (error) {
+        console.error('Erro ao abrir cápsula no Supabase:', error);
+        toast.error('Não foi possível salvar a abertura da cápsula no servidor.');
+      }
+    }
+  }, [set, session?.user]);
 
   // ── Wishes ────────────────────────────────────────────────────────────────────
-  const addWish = useCallback((w: Omit<WishItem, 'id'>) => {
-    set((p) => ({ ...p, wishes: [...p.wishes, { ...w, id: uid() }] }));
-  }, [set]);
+  const addWish = useCallback(async (w: Omit<WishItem, 'id'>) => {
+    const localId = uid();
+    set((p) => ({ ...p, wishes: [...p.wishes, { ...w, id: localId }] }));
 
-  const deleteWish = useCallback((id: string) => {
+    if (session?.user) {
+      const { data: inserted, error } = await supabase.from('wishes').insert([{
+        name: w.name,
+        description: w.description,
+        link: w.link,
+        category: w.category,
+        priority: w.priority,
+        owner: w.owner,
+      }]).select('id').single();
+
+      if (error) {
+        console.error('Erro ao salvar desejo no Supabase:', error);
+        toast.error('Não foi possível salvar o desejo no servidor. Ele só existe neste aparelho por enquanto.');
+      } else if (inserted?.id) {
+        set((p) => ({ ...p, wishes: p.wishes.map((wish) => wish.id === localId ? { ...wish, id: inserted.id } : wish) }));
+      }
+    }
+  }, [set, session?.user]);
+
+  const deleteWish = useCallback(async (id: string) => {
     set((p) => ({ ...p, wishes: p.wishes.filter((w) => w.id !== id) }));
-  }, [set]);
+
+    if (session?.user) {
+      const { error } = await supabase.from('wishes').delete().eq('id', id);
+      if (error) {
+        console.error('Erro ao apagar desejo no Supabase:', error);
+        toast.error('Não foi possível apagar o desejo no servidor.');
+      }
+    }
+  }, [set, session?.user]);
 
   // ── Questions ─────────────────────────────────────────────────────────────────
-  const answerQuestion = useCallback((id: string, answer: string) => {
+  const answerQuestion = useCallback(async (id: string, answer: string) => {
+    if (!currentUser) return;
+    const answeredAt = new Date().toISOString();
     set((p) => ({
       ...p,
       questions: p.questions.map((q) =>
-        q.id === id ? { ...q, myAnswer: answer, answeredAt: new Date().toISOString() } : q
+        q.id === id ? { ...q, myAnswer: answer, answeredAt } : q
       ),
       answeredQuestionIds: p.answeredQuestionIds.includes(id) ? p.answeredQuestionIds : [...p.answeredQuestionIds, id],
     }));
-  }, [set]);
+
+    if (session?.user) {
+      const { error } = await supabase.from('question_answers').upsert({
+        question_id: id,
+        user_slot: currentUser,
+        answer,
+        answered_at: answeredAt,
+      }, { onConflict: 'question_id,user_slot' });
+
+      if (error) {
+        console.error('Erro ao salvar resposta no Supabase:', error);
+        toast.error('Não foi possível salvar sua resposta no servidor.');
+      }
+    }
+  }, [set, currentUser, session?.user]);
 
   const getDailyQuestion = useCallback((): CoupleQuestion => {
     const unanswered = data.questions.filter((q) => !q.myAnswer);
@@ -1128,9 +1322,18 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [set, session?.user, data.coupleProfile]);
 
+  // Curtir/favoritar é por pessoa (likedBy/favoritedBy); aqui calculamos o
+  // booleano relativo a quem está logado neste aparelho para a UI consumir.
+  const memoriesForUI = useMemo(() => data.memories.map((m) => ({
+    ...m,
+    liked: currentUser ? m.likedBy.includes(currentUser) : false,
+    favorited: currentUser ? m.favoritedBy.includes(currentUser) : false,
+  })), [data.memories, currentUser]);
+
   return (
     <AppDataContext.Provider value={{
       ...data,
+      memories: memoriesForUI,
       addEvent, updateEvent, deleteEvent, getEventsForDate, getUpcomingEvents,
       addGoal, updateGoal, deleteGoal,
       addMemory, toggleMemoryLike, toggleMemoryFavorite, deleteMemory,

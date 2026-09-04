@@ -62,13 +62,12 @@ function MemoriasTab() {
   const [form, setForm] = useState({
     title: '', description: '', date: getLocalDateKey(),
     location: '', emotion: 'feliz' as Memory['emotion'],
-    liked: false, favorited: false, userId: 'user1' as 'user1' | 'user2', // userId será sobrescrito
   });
 
   const resetForm = () => {
     setForm({
       title: '', description: '', date: getLocalDateKey(),
-      location: '', emotion: 'feliz', liked: false, favorited: false, userId: 'user1',
+      location: '', emotion: 'feliz',
     });
     setImageUrls([]); // Limpar as URLs das imagens
     setSelectedFiles([]);
@@ -164,7 +163,7 @@ function MemoriasTab() {
             <MemoryCard
               key={m.id}
               memory={m}
-              onLike={() => toggleMemoryLike(m.id)} // TODO: Passar userId para like
+              onLike={() => toggleMemoryLike(m.id)}
               onFavorite={() => toggleMemoryFavorite(m.id)}
               onDelete={() => deleteMemory(m.id)}
               coupleProfile={coupleProfile}

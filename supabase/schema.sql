@@ -74,7 +74,48 @@ create table if not exists public.memories (
   location text,
   image_urls text[] not null default '{}',
   user_id uuid references auth.users(id),
+  user_slot text check (user_slot in ('user1', 'user2')),
+  liked_by text[] not null default '{}',
+  favorited_by text[] not null default '{}',
   created_at timestamptz not null default now()
+);
+
+alter table public.memories add column if not exists user_slot text check (user_slot in ('user1', 'user2'));
+alter table public.memories add column if not exists liked_by text[] not null default '{}';
+alter table public.memories add column if not exists favorited_by text[] not null default '{}';
+
+-- Cápsulas do tempo: mensagens para abrir numa data futura.
+create table if not exists public.time_capsules (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  message text not null,
+  open_date date not null,
+  opened boolean not null default false,
+  user_slot text check (user_slot in ('user1', 'user2')), -- quem criou a cápsula
+  created_at timestamptz not null default now()
+);
+
+-- Lista de desejos do casal.
+create table if not exists public.wishes (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  link text,
+  category text,
+  priority text not null default 'media' check (priority in ('alta', 'media', 'baixa')),
+  owner text,
+  created_at timestamptz not null default now()
+);
+
+-- Resposta de cada pessoa para a "pergunta do dia" (perguntas em si moram no
+-- código do app com ids fixos q0..q9, só a resposta de cada um é salva aqui).
+create table if not exists public.question_answers (
+  id uuid primary key default gen_random_uuid(),
+  question_id text not null,
+  user_slot text not null check (user_slot in ('user1', 'user2')),
+  answer text not null,
+  answered_at timestamptz not null default now(),
+  unique (question_id, user_slot)
 );
 
 create table if not exists public.messages (
@@ -120,6 +161,9 @@ alter table public.memories enable row level security;
 alter table public.messages enable row level security;
 alter table public.check_ins enable row level security;
 alter table public.gamification_state enable row level security;
+alter table public.time_capsules enable row level security;
+alter table public.wishes enable row level security;
+alter table public.question_answers enable row level security;
 
 drop policy if exists "casal acessa profiles" on public.profiles;
 create policy "casal acessa profiles" on public.profiles
@@ -147,6 +191,18 @@ create policy "casal acessa memories" on public.memories
 
 drop policy if exists "casal acessa messages" on public.messages;
 create policy "casal acessa messages" on public.messages
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "casal acessa time_capsules" on public.time_capsules;
+create policy "casal acessa time_capsules" on public.time_capsules
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "casal acessa wishes" on public.wishes;
+create policy "casal acessa wishes" on public.wishes
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+drop policy if exists "casal acessa question_answers" on public.question_answers;
+create policy "casal acessa question_answers" on public.question_answers
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 
 -- ─── Realtime (para o chat aparecer na hora nos dois aparelhos) ───────────────
